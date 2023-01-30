@@ -28,7 +28,8 @@ def collate_fn(batch):
 
 class DataModule(LightningDataModule):
     """ClimateLearn's data module interface. Encapsulates dataset/task-specific
-        data modules."""
+    data modules."""
+
     def __init__(
         self,
         dataset,
@@ -71,14 +72,14 @@ class DataModule(LightningDataModule):
             :python:`val_start_year` must be at least
             :python:`train_start_year+1` since the training set ends the year
             before :python:`val_start_year`. E.g., if
-            :python:`train_start_year` is 1970, then 
+            :python:`train_start_year` is 1970, then
             :python:`val_start_year` must be 1971 or later.
         :type val_start_year: Year
         :param test_start_year: The first year of the testing set, inclusive.
             :python:`test_start_year` must be at least
             :python:`val_start_year+1` since the validation set ends the year
             before :python:`test_start_year`. E.g., if
-            :python:`val_start_year` is 2015, then 
+            :python:`val_start_year` is 2015, then
             :python:`test_start_year` must be 2016 or later.
         :type test_start_year: Year
         :param end_year: The last year of the testing set, inclusive.
