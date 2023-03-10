@@ -24,6 +24,7 @@ class Trainer:
         logger=False,
         patience=5,
         early_stopping=False,
+        dirpath=None,
         task=None,
     ):
         seed_everything(seed)
@@ -33,6 +34,7 @@ class Trainer:
             verbose=False,
             filename="epoch_{epoch:03d}",
             auto_insert_metric_name=False,
+            dirpath=dirpath,
         )
         summary_callback = RichModelSummary(max_depth=-1)
         progress_callback = RichProgressBar()

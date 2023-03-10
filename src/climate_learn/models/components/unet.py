@@ -188,3 +188,49 @@ class Unet(nn.Module):
             m(pred, y, transform, out_variables, lat, clim, log_postfix)
             for m in metrics
         ], pred
+
+
+class UnetEncoder(Unet):
+    def predict(self, x):
+        if len(x.shape) == 5:
+            x = x.flatten(1, 2)
+        x = self.image_proj(x)
+        h = [x]
+        for m in self.down:
+            x = m(x)
+            h.append(x)
+        x = self.middle(x)
+        return h, x
+    
+    def forward():
+        raise NotImplementedError()
+    
+    def evaluate():
+        raise NotImplementedError()
+
+
+class UnetDecoder(Unet):
+    def predict(self, x, h):
+        for m in self.up:
+            if isinstance(m, Upsample):
+                x = m(x)
+            else:
+                s = h.pop()
+                x = torch.cat((x, s), dim=1)
+                x = m(x)
+        pred = self.final(self.activation(self.norm(x)))
+        return pred
+    
+    def forward(self, x, h, y, out_variables, metric, lat, log_postfix):
+        pred = self.predict(x, h)
+        return ([
+            m(pred, y, out_variables, lat=lat, log_postfix=log_postfix)
+            for m in metric
+        ], x)
+    
+    def evaluate(self, x, h, y, variables, out_variables, transform, metrics, lat, clim, log_postfix):
+        pred = self.predict(x, h)
+        return ([
+            m(pred, y, transform, out_variables, lat, clim, log_postfix)
+            for m in metrics
+        ], pred)
