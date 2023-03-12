@@ -3,6 +3,8 @@ from .modules import *
 from climate_learn.data import IterDataModule, DataModule
 from climate_learn.data.tasks.args import ForecastingArgs
 from climate_learn.utils.datetime import Hours
+import torch.nn as nn
+import torch
 
 
 def load_model(name, task, model_kwargs, optim_kwargs):
@@ -12,8 +14,27 @@ def load_model(name, task, model_kwargs, optim_kwargs):
         model_cls = ResNet
     elif name == "unet":
         model_cls = Unet
+    elif name.startswith("weap"):
+        model_cls = UnetEncoder
 
     model = model_cls(**model_kwargs)
+    
+    if name.startswith("weap"):
+        for param in model.parameters():
+            param.requires_grad = False
+        model = WEAPEncoder(model)
+        if name == "weap.z500":
+            path = "../capstone/encoders/z500_epoch27.pt"
+        elif name == "weap.t850":
+            path = "../capstone/encoders/t850_epoch27.pt"
+        model.load_state_dict(torch.load(path))
+        model2 = UnetDecoder(**model_kwargs)
+        if name == "weap.z500":
+            path = "../capstone/z500/model.pt"
+        elif name == "weap.t850":
+            path = "../capstone/t850/model.pt"
+        model2.load_state_dict(torch.load(path))
+        model = WEAPForecast(model, model2)
 
     if task == "forecasting":
         module = ForecastLitModule(model, **optim_kwargs)
@@ -49,3 +70,43 @@ def set_climatology(model_module, data_module):
 
 def fit_lin_reg_baseline(model_module, data_module, reg_hparam=1.0):
     model_module.fit_lin_reg_baseline(data_module.train_dataset, reg_hparam)
+
+
+class WEAPEncoder(nn.Module):
+    def __init__(self, ftr_extractor, device="cpu"):
+        super().__init__()
+        self.ftr_extractor = ftr_extractor.to(device)
+        self.linear = nn.Linear(1024*4*8, 1024, device=device)
+
+    def forward(self, x):
+        x = self.ftr_extractor.predict(x)[1]
+        x = torch.flatten(x, start_dim=1)
+        return self.linear(x)
+    
+
+class WEAPForecast(nn.Module):
+    def __init__(self, encoder, decoder, device="cpu"):
+        super().__init__()
+        self.encoder = encoder.to(device)
+        self.decoder = decoder.to(device)
+        
+    def predict(self, x):
+        h, x = self.encoder(x)
+        pred = self.decoder(x, h)
+        return pred
+    
+    def forward(self, x, y, out_variables, metric, lat, log_postfix):
+        pred = self.predict(x)
+        return ([
+            m(pred, y, out_variables, lat=lat, log_postfix=log_postfix)
+            for m in metric
+        ], x)
+    
+    def evaluate(
+        self, x, y, variables, out_variables, transform, metrics, lat, clim, log_postfix
+    ):
+        pred = self.predict(x)
+        return ([
+            m(pred, y, transform, out_variables, lat, clim, log_postfix)
+            for m in metrics
+        ], pred)
