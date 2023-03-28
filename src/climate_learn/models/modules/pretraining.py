@@ -19,14 +19,17 @@ class PretrainingLitModule(pl.LightningModule):
         eta_min=1e-8,
         init_temp=np.log(0.07),
         max_temp=np.log(100),
-        temp_lr=1e-2
+        temp_lr=1e-2,
+        logit_scaling=True
     ):
         super().__init__()
         self.save_hyperparameters(logger=False, ignore=["net"])
         self.net1 = net1
         self.net2 = net2
         self.optim_cls = torch.optim.AdamW
+        self.logit_scaling = logit_scaling
         self.temperature = torch.tensor([init_temp], requires_grad=True)
+        self.max_temp = torch.tensor([max_temp], requires_grad=False)
         self.max_temp = max_temp
         self.temp_lr = temp_lr
 
@@ -62,7 +65,13 @@ class PretrainingLitModule(pl.LightningModule):
     def training_step(self, batch, batch_idx):
         x = batch[0]
         encodings = self(x)
-        logit_scale = torch.exp(self.temperature)
+        if self.logit_scaling:
+            logit_scale = torch.exp(torch.min(
+                self.temperature,
+                self.max_temp
+            ))
+        else:
+            logit_scale = 1
         logits = logit_scale * torch.stack(
             torch.matmul(encodings[0], encodings[1].T),
             torch.matmul(encodings[1], encodings[0].T)
@@ -85,7 +94,13 @@ class PretrainingLitModule(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
         x = batch[0]
         encodings = self(x)
-        logit_scale = torch.exp(self.temperature)
+        if self.logit_scaling:
+            logit_scale = torch.exp(torch.min(
+                self.temperature,
+                self.max_temp
+            ))
+        else:
+            logit_scale = 1
         logits = logit_scale * torch.stack(
             torch.matmul(encodings[0], encodings[1].T),
             torch.matmul(encodings[1], encodings[0].T)
@@ -109,7 +124,13 @@ class PretrainingLitModule(pl.LightningModule):
     def test_step(self, batch, batch_idx):
         x = batch[0]
         encodings = self(x)
-        logit_scale = torch.exp(self.temperature)
+        if self.logit_scaling:
+            logit_scale = torch.exp(torch.min(
+                self.temperature,
+                self.max_temp
+            ))
+        else:
+            logit_scale = 1
         logits = logit_scale * torch.stack(
             torch.matmul(encodings[0], encodings[1].T),
             torch.matmul(encodings[1], encodings[0].T)
