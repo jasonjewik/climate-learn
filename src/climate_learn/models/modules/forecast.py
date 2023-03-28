@@ -23,7 +23,8 @@ class ForecastLitModule(LightningModule):
         self,
         net: torch.nn.Module,
         optimizer: OptimizerCallable = torch.optim.Adam,
-        lr: float = 0.001,
+        enc_lr: float = 0.001,
+        dec_lr: float = 0.001,
         weight_decay: float = 0.005,
         warmup_epochs: int = 5,
         max_epochs: int = 30,
@@ -35,6 +36,8 @@ class ForecastLitModule(LightningModule):
         self.net = net
         self.test_loss = [lat_weighted_rmse, lat_weighted_acc]
         self.lr_baseline = None
+        self.enc_lr = enc_lr
+        self.dec_lr = dec_lr
         self.train_loss = [lat_weighted_mse]
         self.val_loss = [lat_weighted_mse_val, lat_weighted_rmse, lat_weighted_acc]
         self.optim_cls = optimizer
@@ -239,14 +242,26 @@ class ForecastLitModule(LightningModule):
             else:
                 decay.append(m)
 
+        # optimizer = self.optim_cls(
+        #     [
+        #         {
+        #             "params": decay,
+        #            "lr": self.hparams.lr,
+        #           "weight_decay": self.hparams.weight_decay,
+        #         },
+        #         {"params": no_decay, "lr": self.hparams.lr, "weight_decay": 0},
+        #     ]
+        # )
         optimizer = self.optim_cls(
             [
                 {
-                    "params": decay,
-                    "lr": self.hparams.lr,
-                    "weight_decay": self.hparams.weight_decay,
+                    "params": self.net.encoder.parameters(),
+                    "lr": self.enc_lr,
                 },
-                {"params": no_decay, "lr": self.hparams.lr, "weight_decay": 0},
+                {
+                    "params": self.net.decoder.parameters(),
+                    "lr": self.dec_lr,
+                }
             ]
         )
 

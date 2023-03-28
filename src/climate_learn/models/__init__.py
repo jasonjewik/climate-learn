@@ -20,23 +20,22 @@ def load_model(name, task, model_kwargs, optim_kwargs):
     model = model_cls(**model_kwargs)
     
     if name.startswith("weap"):
-        for param in model.parameters():
-            param.requires_grad = False
         model = WEAPEncoder(model)
         if name == "weap.z500":
-            path = "../capstone/encoders/z500_epoch27.pt"
+            path = "../capstone/encoders/z500_epoch12.pt"
         elif name == "weap.t850":
-            path = "../capstone/encoders/t850_epoch27.pt"
+            path = "../capstone/encoders/t850_epoch12.pt"
         model.load_state_dict(torch.load(path))
-        model2 = UnetDecoder(**model_kwargs)
-        if name == "weap.z500":
-            path = "../capstone/z500/model.pt"
-        elif name == "weap.t850":
-            path = "../capstone/t850/model.pt"
-        model2.load_state_dict(torch.load(path))
-        model = WEAPForecast(model, model2)
+        # for param in model.parameters():
+        #     param.requires_grad = False
+        model = WEAPForecast(model, UnetDecoder(**model_kwargs))
 
     if task == "forecasting":
+        # if name == "weap.z500":
+        #     path = "../capstone/z500/epoch_024.ckpt"
+        # elif name == "weap.t850":
+        #     path = "../capstone/t850/epoch_016.ckpt"
+        # module = ForecastLitModule.load_from_checkpoint(path, model, **optim_kwargs)
         module = ForecastLitModule(model, **optim_kwargs)
     elif task == "downscaling":
         module = DownscaleLitModule(model, **optim_kwargs)
@@ -91,8 +90,8 @@ class WEAPForecast(nn.Module):
         self.decoder = decoder.to(device)
         
     def predict(self, x):
-        h, x = self.encoder(x)
-        pred = self.decoder(x, h)
+        h, x = self.encoder.ftr_extractor.predict(x)
+        pred = self.decoder.predict(x, h)
         return pred
     
     def forward(self, x, y, out_variables, metric, lat, log_postfix):

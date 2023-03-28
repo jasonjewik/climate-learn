@@ -23,6 +23,7 @@ class Trainer:
         max_epochs=4,
         logger=False,
         patience=5,
+        gradient_clip_val=0,
         early_stopping=False,
         dirpath=None,
         task=None,
@@ -68,6 +69,7 @@ class Trainer:
             precision=precision,
             max_epochs=max_epochs,
             callbacks=callbacks,
+            gradient_clip_val=gradient_clip_val
         )
 
     def fit(self, model_module, data_module):
