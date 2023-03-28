@@ -12,6 +12,8 @@ def load_model(name, task, model_kwargs, optim_kwargs):
         model_cls = ResNet
     elif name == "unet":
         model_cls = Unet
+    elif name == "resnet-encoder":
+        model_cls = ResNetEncoder
 
     model = model_cls(**model_kwargs)
 
@@ -19,6 +21,8 @@ def load_model(name, task, model_kwargs, optim_kwargs):
         module = ForecastLitModule(model, **optim_kwargs)
     elif task == "downscaling":
         module = DownscaleLitModule(model, **optim_kwargs)
+    elif task == "pretraining":
+        module = PretrainingLitModule(model, **optim_kwargs)
     else:
         raise NotImplementedError("Only support foreacasting and downscaling")
 
