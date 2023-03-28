@@ -23,7 +23,7 @@ class PretrainingLitModule(pl.LightningModule):
         logit_scaling=True
     ):
         super().__init__()
-        self.save_hyperparameters(logger=False, ignore=["net"])
+        self.save_hyperparameters(logger=False, ignore=["net1", "net2"])
         self.net1 = net1
         self.net2 = net2
         self.optim_cls = torch.optim.AdamW
