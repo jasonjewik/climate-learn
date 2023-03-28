@@ -104,7 +104,9 @@ class ResNet(nn.Module):
 class ResNetEncoder(nn.Module):
     def __init__(
         self,
+        in_channels=1,
         hidden_channels=128,
+        out_channels=1,
         embedding_dim=512,
         dropout=0.1,
         n_blocks=16,

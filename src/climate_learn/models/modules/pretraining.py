@@ -3,6 +3,7 @@ from .utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 import numpy as np
 import pytorch_lightning as pl
 import torch
+from torchvision.transforms import transforms
 import torch.nn.functional as F
 
 class PretrainingLitModule(pl.LightningModule):
@@ -127,3 +128,22 @@ class PretrainingLitModule(pl.LightningModule):
             batch_size=len(x)
         )
         return loss
+    
+    def set_denormalization(self, mean, std):
+        self.denormalization = transforms.Normalize(mean, std)
+
+    def set_lat_lon(self, lat, lon):
+        self.lat = lat
+        self.lon = lon
+
+    def set_pred_range(self, r):
+        self.pred_range = r
+
+    def set_train_climatology(self, clim):
+        self.train_clim = clim
+
+    def set_val_climatology(self, clim):
+        self.val_clim = clim
+
+    def set_test_climatology(self, clim):
+        self.test_clim = clim
