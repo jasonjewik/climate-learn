@@ -18,10 +18,10 @@ NAME_TO_VAR = {
     "land_sea_mask": "lsm",
     "orography": "orography",
     "lattitude": "lat2d",
-    "geopotential": "z",
+    "geopotential_500": "z",
     "u_component_of_wind": "u",
     "v_component_of_wind": "v",
-    "temperature": "t",
+    "temperature_850": "t",
     "relative_humidity": "r",
     "specific_humidity": "q",
     "vorticity": "vo",
@@ -43,6 +43,8 @@ SINGLE_LEVEL_VARS = [
     "land_sea_mask",
     "orography",
     "lattitude",
+    "geopotential_500",
+    "temperature_850",
 ]
 
 PRESSURE_LEVEL_VARS = [
@@ -65,8 +67,8 @@ NAME_LEVEL_TO_VAR_LEVEL = {}
 for var in SINGLE_LEVEL_VARS:
     NAME_LEVEL_TO_VAR_LEVEL[var] = NAME_TO_VAR[var]
 
-for var in PRESSURE_LEVEL_VARS:
-    for l in DEFAULT_PRESSURE_LEVELS:
-        NAME_LEVEL_TO_VAR_LEVEL[var + "_" + str(l)] = NAME_TO_VAR[var] + "_" + str(l)
+# for var in PRESSURE_LEVEL_VARS:
+#    for l in DEFAULT_PRESSURE_LEVELS:
+#        NAME_LEVEL_TO_VAR_LEVEL[var + "_" + str(l)] = NAME_TO_VAR[var] + "_" + str(l)
 
 VAR_LEVEL_TO_NAME_LEVEL = {v: k for k, v in NAME_LEVEL_TO_VAR_LEVEL.items()}
