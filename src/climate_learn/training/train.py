@@ -25,6 +25,7 @@ class Trainer:
         patience=5,
         early_stopping=False,
         task=None,
+        dirpath=None
     ):
         seed_everything(seed)
 
@@ -66,6 +67,7 @@ class Trainer:
             precision=precision,
             max_epochs=max_epochs,
             callbacks=callbacks,
+            default_root_dir=dirpath
         )
 
     def fit(self, model_module, data_module):
