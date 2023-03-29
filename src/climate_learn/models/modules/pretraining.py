@@ -11,6 +11,7 @@ class PretrainingLitModule(pl.LightningModule):
         self,
         net1,
         net2,
+        optimizer=torch.optim.Adam,
         lr=5e-4,
         weight_decay=0.2,
         warmup_epochs=5,
@@ -30,18 +31,22 @@ class PretrainingLitModule(pl.LightningModule):
         self.logit_scaling = logit_scaling
         self.temperature = torch.tensor([init_temp], requires_grad=True)
         self.max_temp = torch.tensor([max_temp], requires_grad=False)
-        self.max_temp = max_temp
         self.temp_lr = temp_lr
 
     def forward(self, x):
         enc1 = F.normalize(self.net1(x[:,:,0,:,:]))
         enc2 = F.normalize(self.net2(x[:,:,1,:,:]))
-        return torch.stack(enc1, enc2)
+        return torch.stack((enc1, enc2))
     
     def configure_optimizers(self):
         params = [
             {
-                "params": self.net.parameters(),
+                "params": self.net1.parameters(),
+                "lr": self.hparams.lr,
+                "weight_decay": self.hparams.weight_decay
+            },
+            {
+                "params": self.net2.parameters(),
                 "lr": self.hparams.lr,
                 "weight_decay": self.hparams.weight_decay
             },
@@ -72,11 +77,11 @@ class PretrainingLitModule(pl.LightningModule):
             ))
         else:
             logit_scale = 1
-        logits = logit_scale * torch.stack(
+        logits = logit_scale * torch.stack((
             torch.matmul(encodings[0], encodings[1].T),
             torch.matmul(encodings[1], encodings[0].T)
-        )
-        labels = torch.arange(x.shape[0])
+        ))
+        labels = torch.arange(x.shape[0], device=self.device)
         loss = (
             F.cross_entropy(logits[0], labels)
             + F.cross_entropy(logits[1], labels)
@@ -107,11 +112,11 @@ class PretrainingLitModule(pl.LightningModule):
             ))
         else:
             logit_scale = 1
-        logits = logit_scale * torch.stack(
+        logits = logit_scale * torch.stack((
             torch.matmul(encodings[0], encodings[1].T),
             torch.matmul(encodings[1], encodings[0].T)
-        )
-        labels = torch.arange(x.shape[0])
+        ))
+        labels = torch.arange(x.shape[0], device=self.device)
         loss = (
             F.cross_entropy(logits[0], labels)
             + F.cross_entropy(logits[1], labels)
@@ -143,11 +148,11 @@ class PretrainingLitModule(pl.LightningModule):
             ))
         else:
             logit_scale = 1
-        logits = logit_scale * torch.stack(
+        logits = logit_scale * torch.stack((
             torch.matmul(encodings[0], encodings[1].T),
             torch.matmul(encodings[1], encodings[0].T)
-        )
-        labels = torch.arange(x.shape[0])
+        ))
+        labels = torch.arange(x.shape[0], device=self.device)
         loss = (
             F.cross_entropy(logits[0], labels)
             + F.cross_entropy(logits[1], labels)
@@ -167,6 +172,18 @@ class PretrainingLitModule(pl.LightningModule):
             on_epoch=True
         )
         return loss
+
+    def on_train_start(self):
+        self.temperature = self.temperature.to(device=self.device)
+        self.max_temp = self.max_temp.to(device=self.device)
+
+    def on_validation_start(self):
+        self.temperature = self.temperature.to(device=self.device)
+        self.max_temp = self.max_temp.to(device=self.device)
+
+    def on_test_start(self):
+        self.temperature = self.temperature.to(device=self.device)
+        self.max_temp = self.max_temp.to(device=self.device)
     
     def set_denormalization(self, mean, std):
         self.denormalization = transforms.Normalize(mean, std)
