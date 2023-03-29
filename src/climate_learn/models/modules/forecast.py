@@ -31,7 +31,7 @@ class ForecastLitModule(LightningModule):
         eta_min: float = 1e-8,
     ):
         super().__init__()
-        self.save_hyperparameters(logger=False, ignore=["net"])
+        self.save_hyperparameters(ignore=["net"])
         self.net = net
         self.test_loss = [lat_weighted_rmse, lat_weighted_acc]
         self.lr_baseline = None
