@@ -23,7 +23,7 @@ class PretrainingLitModule(pl.LightningModule):
         logit_scaling=True
     ):
         super().__init__()
-        self.save_hyperparameters(logger=False, ignore=["net1", "net2"])
+        self.save_hyperparameters(ignore=["net1", "net2"])
         self.net1 = net1
         self.net2 = net2
         self.optim_cls = torch.optim.AdamW
@@ -89,6 +89,12 @@ class PretrainingLitModule(pl.LightningModule):
             prog_bar=True,
             batch_size=len(x)
         )
+        self.log(
+            "temperature",
+            self.temperature,
+            on_step=True,
+            on_epoch=False
+        )
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -119,6 +125,12 @@ class PretrainingLitModule(pl.LightningModule):
             sync_dist=True,
             batch_size=len(x)
         )
+        self.log(
+            "temperature",
+            self.temperature,
+            on_step=False,
+            on_epoch=True
+        )
         return loss
     
     def test_step(self, batch, batch_idx):
@@ -147,6 +159,12 @@ class PretrainingLitModule(pl.LightningModule):
             on_epoch=True,
             sync_dist=True,
             batch_size=len(x)
+        )
+        self.log(
+            "temperature",
+            self.temperature,
+            on_step=False,
+            on_epoch=True
         )
         return loss
     
