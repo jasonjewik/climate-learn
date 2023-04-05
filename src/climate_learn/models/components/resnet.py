@@ -100,6 +100,73 @@ class ResNet(nn.Module):
             for m in metrics
         ], pred
 
+class ResNetEncoder2(nn.Module):
+    def __init__(
+        self,
+        in_channels=1,
+        hidden_channels=[32,128,512],
+        out_channels=1024,
+        embedding_dim=1024,
+        dropout=0.1,
+        img_size=(32,64),
+        mode="pretraining"
+    ):
+        super().__init__()
+        self.in_channels = in_channels
+        self.hidden_channels = hidden_channels
+        self.out_channels = out_channels
+        self.embedding_dim = embedding_dim
+        self.activation = nn.LeakyReLU(0.3)
+        self.mode = mode
+
+        self.image_proj = PeriodicConv2D(
+            self.in_channels,
+            self.hidden_channels[0],
+            kernel_size=2,
+            stride=2,
+            padding=0
+        )
+
+        blocks = []
+        for i in range(len(self.hidden_channels)):
+            in_ch = self.hidden_channels[i]
+            if i < len(self.hidden_channels) - 1:
+                out_ch = self.hidden_channels[i+1]
+            else:
+                out_ch = self.out_channels
+            blocks.append(
+                ResidualBlock(
+                    in_ch,
+                    out_ch,
+                    activation="leaky",
+                    norm=True,
+                    dropout=dropout
+                )
+            )
+        self.blocks = nn.ModuleList(blocks)
+        self.norm = nn.BatchNorm2d(self.out_channels)
+        if self.mode == "pretraining":
+            self.final = nn.Sequential(
+                PeriodicConv2D(
+                    self.out_channels,
+                    self.out_channels,
+                    kernel_size=img_size[0]//2,
+                    stride=img_size[0]//2,
+                    padding=0
+                ),
+                nn.Flatten(),
+                nn.Linear(1*2*self.out_channels, self.embedding_dim)
+            )
+        else:
+            self.final = nn.Identity()
+
+    def forward(self, x):
+        x = self.image_proj(x)
+        for block in self.blocks:
+            x = block(x)
+        pred = self.final(self.activation(self.norm(x)))
+        return pred
+
 
 class ResNetEncoder(nn.Module):
     def __init__(
