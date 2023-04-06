@@ -234,6 +234,85 @@ class PretrainingLitModule2(pl.LightningModule):
         enc1 = F.normalize(self.net(x[:,:,0,:,:]))
         enc2 = F.normalize(self.net(x[:,:,1,:,:]))
         return torch.stack((enc1, enc2))
+        
+    def training_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log(
+            "train_loss",
+            loss,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=True,
+            batch_size=len(batch[0])
+        )
+        self.log(
+            "temperature",
+            self.temperature,
+            on_step=True,
+            on_epoch=False,
+            batch_size=len(batch[0])
+        )
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log(
+            "val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=len(batch[0])
+        )
+        self.log(
+            "temperature",
+            self.temperature,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch[0])
+        )
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log(
+            "test_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=len(batch[0])
+        )
+        self.log(
+            "temperature",
+            self.temperature,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch[0])
+        )
+        return loss
+    
+    def compute_loss(self, batch):
+        x = batch[0]
+        encodings = self(x)
+        if self.logit_scaling:
+            logit_scale = torch.exp(torch.min(
+                self.temperature,
+                self.max_temp
+            ))
+        else:
+            logit_scale = 1
+        logits = logit_scale * torch.stack((
+            torch.matmul(encodings[0], encodings[1].T),
+            torch.matmul(encodings[1], encodings[0].T)
+        ))
+        labels = torch.arange(x.shape[0], device=self.device)
+        loss = (
+            F.cross_entropy(logits[0], labels)
+            + F.cross_entropy(logits[1], labels)
+        ) / 2
+        return loss
     
     def configure_optimizers(self):
         params = [
@@ -256,114 +335,12 @@ class PretrainingLitModule2(pl.LightningModule):
             self.hparams.warmup_start_lr,
             self.hparams.eta_min
         )
-
-        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
-    
-    def training_step(self, batch, batch_idx):
-        x = batch[0]
-        encodings = self(x)
-        if self.logit_scaling:
-            logit_scale = torch.exp(torch.min(
-                self.temperature,
-                self.max_temp
-            ))
-        else:
-            logit_scale = 1
-        logits = logit_scale * torch.stack((
-            torch.matmul(encodings[0], encodings[1].T),
-            torch.matmul(encodings[1], encodings[0].T)
-        ))
-        labels = torch.arange(x.shape[0], device=self.device)
-        loss = (
-            F.cross_entropy(logits[0], labels)
-            + F.cross_entropy(logits[1], labels)
-        ) / 2
-        self.log(
-            "train_loss",
-            loss,
-            on_step=True,
-            on_epoch=False,
-            prog_bar=True,
-            batch_size=len(x)
-        )
-        self.log(
-            "temperature",
-            self.temperature,
-            on_step=True,
-            on_epoch=False
-        )
-        return loss
-    
-    def validation_step(self, batch, batch_idx):
-        x = batch[0]
-        encodings = self(x)
-        if self.logit_scaling:
-            logit_scale = torch.exp(torch.min(
-                self.temperature,
-                self.max_temp
-            ))
-        else:
-            logit_scale = 1
-        logits = logit_scale * torch.stack((
-            torch.matmul(encodings[0], encodings[1].T),
-            torch.matmul(encodings[1], encodings[0].T)
-        ))
-        labels = torch.arange(x.shape[0], device=self.device)
-        loss = (
-            F.cross_entropy(logits[0], labels)
-            + F.cross_entropy(logits[1], labels)
-        ) / 2
-        self.log(
-            "val_loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=False,
-            sync_dist=True,
-            batch_size=len(x)
-        )
-        self.log(
-            "temperature",
-            self.temperature,
-            on_step=False,
-            on_epoch=True
-        )
-        return loss
-    
-    def test_step(self, batch, batch_idx):
-        x = batch[0]
-        encodings = self(x)
-        if self.logit_scaling:
-            logit_scale = torch.exp(torch.min(
-                self.temperature,
-                self.max_temp
-            ))
-        else:
-            logit_scale = 1
-        logits = logit_scale * torch.stack((
-            torch.matmul(encodings[0], encodings[1].T),
-            torch.matmul(encodings[1], encodings[0].T)
-        ))
-        labels = torch.arange(x.shape[0], device=self.device)
-        loss = (
-            F.cross_entropy(logits[0], labels)
-            + F.cross_entropy(logits[1], labels)
-        ) / 2
-        self.log(
-            "test_loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            sync_dist=True,
-            batch_size=len(x)
-        )
-        self.log(
-            "temperature",
-            self.temperature,
-            on_step=False,
-            on_epoch=True
-        )
-        return loss
+        lr_scheduler_config = {
+            "scheduler": lr_scheduler,
+            "interval": "step",
+            "frequency": 10
+        }
+        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler_config}
 
     def on_train_start(self):
         self.temperature = self.temperature.to(device=self.device)
