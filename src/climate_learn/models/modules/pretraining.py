@@ -210,6 +210,7 @@ class PretrainingLitModule2(pl.LightningModule):
         self,
         net,
         optimizer=torch.optim.Adam,
+        betas=(0.9,0.999),
         lr=5e-4,
         weight_decay=0.2,
         warmup_epochs=5,
@@ -219,16 +220,20 @@ class PretrainingLitModule2(pl.LightningModule):
         init_temp=np.log(0.07),
         max_temp=np.log(100),
         temp_lr=1e-2,
-        logit_scaling=True
+        logit_scaling=True,
+        loss="clip"
     ):
         super().__init__()
         self.save_hyperparameters(ignore=["net"])
         self.net = net
         self.optim_cls = optimizer
+        self.betas = betas
         self.logit_scaling = logit_scaling
         self.temperature = torch.tensor([init_temp], requires_grad=True)
         self.max_temp = torch.tensor([max_temp], requires_grad=False)
         self.temp_lr = temp_lr
+        assert loss in ("clip", "cyclip")
+        self.loss = loss        
 
     def forward(self, x):
         enc1 = F.normalize(self.net(x[:,:,0,:,:]))
@@ -308,10 +313,22 @@ class PretrainingLitModule2(pl.LightningModule):
             torch.matmul(encodings[1], encodings[0].T)
         ))
         labels = torch.arange(x.shape[0], device=self.device)
-        loss = (
+        clip_loss = (
             F.cross_entropy(logits[0], labels)
             + F.cross_entropy(logits[1], labels)
         ) / 2
+        if self.loss == "clip":
+            loss = clip_loss
+        elif self.loss == "cyclip":
+            cross_modal_loss = torch.mean(torch.square(logits[0] - logits[1]))
+            self_logits = logit_scale * torch.stack((
+                torch.matmul(encodings[0], encodings[0].T),
+                torch.matmul(encodings[1], encodings[1].T)
+            ))
+            in_modal_loss = torch.mean(torch.square(
+                self_logits[0] - self_logits[1]
+            ))
+            loss = clip_loss + cross_modal_loss + in_modal_loss
         return loss
     
     def configure_optimizers(self):
@@ -326,7 +343,7 @@ class PretrainingLitModule2(pl.LightningModule):
                 "lr": self.temp_lr
             }
         ]
-        optimizer = self.optim_cls(params, betas=(0.9,0.99))
+        optimizer = self.optim_cls(params, betas=self.betas)
 
         lr_scheduler = LinearWarmupCosineAnnealingLR(
             optimizer,
@@ -335,12 +352,7 @@ class PretrainingLitModule2(pl.LightningModule):
             self.hparams.warmup_start_lr,
             self.hparams.eta_min
         )
-        lr_scheduler_config = {
-            "scheduler": lr_scheduler,
-            "interval": "step",
-            "frequency": 10
-        }
-        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler_config}
+        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
     def on_train_start(self):
         self.temperature = self.temperature.to(device=self.device)
