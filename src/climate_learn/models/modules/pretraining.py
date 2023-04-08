@@ -299,7 +299,7 @@ class PretrainingLitModule2(pl.LightningModule):
         return loss
     
     def compute_loss(self, batch):
-        x = batch[0]
+        x, time = batch[0], batch[-1]
         encodings = self(x)
         if self.logit_scaling:
             logit_scale = torch.exp(torch.min(
@@ -312,7 +312,14 @@ class PretrainingLitModule2(pl.LightningModule):
             torch.matmul(encodings[0], encodings[1].T),
             torch.matmul(encodings[1], encodings[0].T)
         ))
-        labels = torch.arange(x.shape[0], device=self.device)
+        labels = 1- F.softmax(
+            torch.abs(
+                time.repeat((x.shape[0], 1))
+                - time.repeat((x.shape[0], 1)).T
+            ),
+            dim=0
+        )
+        labels.to(device=self.device)
         clip_loss = (
             F.cross_entropy(logits[0], labels)
             + F.cross_entropy(logits[1], labels)
@@ -324,10 +331,10 @@ class PretrainingLitModule2(pl.LightningModule):
             self_logits = logit_scale * torch.stack((
                 torch.matmul(encodings[0], encodings[0].T),
                 torch.matmul(encodings[1], encodings[1].T)
-            ))
+            )) / 2
             in_modal_loss = torch.mean(torch.square(
                 self_logits[0] - self_logits[1]
-            ))
+            )) / 2
             loss = clip_loss + cross_modal_loss + in_modal_loss
         return loss
     
