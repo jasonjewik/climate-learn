@@ -80,22 +80,25 @@ class Forecasting(Task):
     def get_climatology(self) -> torch.Tensor:
         return torch.from_numpy(self.out_data.mean(axis=0))
 
-    def create_inp_out(self, index) -> Tuple[np.ndarray, np.ndarray]:
+    def create_inp_out(self, index) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         inp = []
+        time = []
         for i in range(self.history):
             idx = index + self.window * i
             inp.append(self.inp_data[idx])
+            time.append(self.time[idx])
         inp = np.stack(inp, axis=0)
         out_idx = index + (self.history - 1) * self.window + self.pred_range
         out = self.out_data[out_idx]
-        return inp, out
+        return inp, out, time
 
     def __getitem__(
         self, index
     ) -> Tuple[np.ndarray, np.ndarray, Sequence[str], Sequence[str]]:
-        inp, out = self.create_inp_out(index)
+        inp, out, time = self.create_inp_out(index)
         out = self.out_transform(torch.from_numpy(out))  # C, 32, 64
         inp = self.inp_transform(torch.from_numpy(inp))  # T, C, 32, 64
+        time = torch.from_numpy(time.astype("datetime64[h]").astype(float))
         if self.constants_data is not None:
             constant = (
                 torch.from_numpy(self.constants_data)
@@ -104,7 +107,7 @@ class Forecasting(Task):
             )
             constant = self.constant_transform(constant)
             inp = torch.cat((inp, constant), dim=1)
-        return inp, out, self.in_vars + self.constant_names, self.out_vars
+        return inp, out, self.in_vars + self.constant_names, self.out_vars, time
 
     def __len__(self) -> int:
         return len(self.inp_data) - ((self.history - 1) * self.window + self.pred_range)
