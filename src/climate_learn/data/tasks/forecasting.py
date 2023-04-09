@@ -33,6 +33,9 @@ class Forecasting(Task):
         )
         self.inp_data: np.ndarray = inp_data.to_numpy().astype(np.float32)
         self.out_data: np.ndarray = out_data.to_numpy().astype(np.float32)
+        self.time_data: np.ndarray = (
+            self.dataset.data_dict[self.in_vars[0]].time.to_numpy().astype("datetime64[h]").astype(float)
+        )
 
         constants_data = [
             self.dataset.constants[k].to_numpy().astype(np.float32)
@@ -86,19 +89,20 @@ class Forecasting(Task):
         for i in range(self.history):
             idx = index + self.window * i
             inp.append(self.inp_data[idx])
-            time.append(self.time[idx])
+            time.append(self.time_data[idx])
         inp = np.stack(inp, axis=0)
+        time = np.array(time) 
         out_idx = index + (self.history - 1) * self.window + self.pred_range
         out = self.out_data[out_idx]
         return inp, out, time
 
     def __getitem__(
         self, index
-    ) -> Tuple[np.ndarray, np.ndarray, Sequence[str], Sequence[str]]:
+    ) -> Tuple[np.ndarray, np.ndarray, Sequence[str], Sequence[str], np.ndarray]:
         inp, out, time = self.create_inp_out(index)
         out = self.out_transform(torch.from_numpy(out))  # C, 32, 64
         inp = self.inp_transform(torch.from_numpy(inp))  # T, C, 32, 64
-        time = torch.from_numpy(time.astype("datetime64[h]").astype(float))
+        time = torch.from_numpy(time)
         if self.constants_data is not None:
             constant = (
                 torch.from_numpy(self.constants_data)
