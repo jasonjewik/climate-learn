@@ -30,32 +30,16 @@ def collate_fn(
     r"""Collate function for DataLoaders.
 
     :param batch: A batch of data samples.
-    :type batch: List[Tuple[torch.Tensor, torch.Tensor, List[str], List[str]]]
+    :type batch: List[Tuple[torch.Tensor, torch.Tensor, torch.Tensor,List[str], List[str]]]
     :return: A tuple of `input`, `output`, `variables`, and `out_variables`.
-    :rtype: Tuple[torch.Tensor, torch.Tensor, List[str], List[str]]
+    :rtype: Tuple[torch.Tensor, torch.Tensor, torch.Tensor, List[str], List[str]]
     """
-
-    def handle_dict_features(t: Dict[str, torch.tensor]) -> torch.tensor:
-        ## Hotfix for the models to work with dict style data
-        t = torch.stack(tuple(t.values()))
-        ## Handles the case for forecasting input as it has history in it
-        ## TODO: Come up with an efficient solution instead of if condition
-        if len(t.size()) == 4:
-            return torch.transpose(t, 0, 1)
-        return t
-
-    ## As a hotfix inp is just stacking input and constants data
-    ## via {**inp_data, **const_data} i.e. merging both of them unto one dict
-    inp = torch.stack(
-        [
-            handle_dict_features({**batch[i][0], **batch[i][2]})
-            for i in range(len(batch))
-        ]
-    )
-    out = torch.stack([handle_dict_features(batch[i][1]) for i in range(len(batch))])
-    variables = list(batch[0][0].keys()) + list(batch[0][2].keys())
-    out_variables = list(batch[0][1].keys())
-    return inp, out, variables, out_variables
+    inp = torch.stack([batch[i][0] for i in range(len(batch))])
+    out = torch.stack([batch[i][1] for i in range(len(batch))])
+    times = torch.stack([batch[i][2] for i in range(len(batch))])
+    variables = batch[0][3]
+    out_variables = batch[0][4]
+    return inp, out, times, variables, out_variables
 
 
 def get_data_class(dataset_args: DatasetArgs) -> Callable[..., Dataset]:
