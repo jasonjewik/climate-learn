@@ -247,13 +247,6 @@ class PretrainingLitModule2(pl.LightningModule):
             ).astype(float),
             requires_grad=False
         )
-        self.send_to_device_tensors = (
-            self.logit_temp,
-            self.max_logit_temp,
-            self.label_temp,
-            self.start_of_epoch,
-            self.end_of_data
-        )
         if loss not in ("clip", "cyclip"):
             raise NotImplementedError(
                 f"loss {loss} not supported, pick either 'clip' or 'cyclip'"
@@ -419,16 +412,13 @@ class PretrainingLitModule2(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
     def on_train_start(self):
-        for tens in self.send_to_device_tensors:
-            tens.to(device=self.device)
+        self.send_tensors_to_device()
 
     def on_validation_start(self):
-        for tens in self.send_to_device_tensors:
-            tens.to(device=self.device)
+        self.send_tensors_to_device()
 
     def on_test_start(self):
-        for tens in self.send_to_device_tensors:
-            tens.to(device=self.device)
+        self.send_tensors_to_device()
     
     def set_denormalization(self, mean, std):
         self.denormalization = transforms.Normalize(mean, std)
@@ -448,3 +438,10 @@ class PretrainingLitModule2(pl.LightningModule):
 
     def set_test_climatology(self, clim):
         self.test_clim = clim
+
+    def send_tensors_to_device(self):
+        self.logit_temp = self.logit_temp.to(device=self.device)
+        self.max_logit_temp = self.max_logit_temp.to(device=self.device)
+        self.label_temp = self.label_temp.to(device=self.device)
+        self.start_of_epoch = self.start_of_epoch.to(device=self.device)
+        self.end_of_data = self.end_of_data.to(device=self.device)
