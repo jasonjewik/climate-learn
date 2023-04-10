@@ -358,7 +358,7 @@ class PretrainingLitModule2(pl.LightningModule):
         # Compute labels
         t = times.clone() / inv_label_scale
         t = t.repeat((x.shape[0], 1))
-        labels = F.softmax(1 - torch.abs(t - t.T))
+        labels = F.softmax(1 - torch.abs(t - t.T), dim=0)
         labels.to(device=self.device)
         # Compute loss
         clip_loss = (
