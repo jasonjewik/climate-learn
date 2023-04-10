@@ -372,12 +372,12 @@ class PretrainingLitModule2(pl.LightningModule):
                 torch.matmul(encodings[0], encodings[0].T),
                 torch.matmul(encodings[1], encodings[1].T)
             ))
-            cross_modal_loss = torch.square(
+            cross_modal_loss = torch.mean(torch.square(
                 cross_modal_logits[0] - cross_modal_logits[1]
-            ) / 2
-            in_modal_loss = torch.square(
+            )) / 2
+            in_modal_loss = torch.mean(torch.square(
                 in_modal_logits[0] - in_modal_logits[1]
-            ) / 2
+            )) / 2
             loss = clip_loss + cross_modal_loss + in_modal_loss
         return loss
     
