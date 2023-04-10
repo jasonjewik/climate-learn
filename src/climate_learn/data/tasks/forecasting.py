@@ -85,24 +85,24 @@ class Forecasting(Task):
 
     def create_inp_out(self, index) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         inp = []
-        time = []
+        times = []
         for i in range(self.history):
             idx = index + self.window * i
             inp.append(self.inp_data[idx])
-            time.append(self.time_data[idx])
+            times.append(self.time_data[idx])
         inp = np.stack(inp, axis=0)
-        time = np.array(time) 
+        times = np.array(times) 
         out_idx = index + (self.history - 1) * self.window + self.pred_range
         out = self.out_data[out_idx]
-        return inp, out, time
+        return inp, out, times
 
     def __getitem__(
         self, index
-    ) -> Tuple[np.ndarray, np.ndarray, Sequence[str], Sequence[str], np.ndarray]:
-        inp, out, time = self.create_inp_out(index)
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, Sequence[str], Sequence[str]]:
+        inp, out, times = self.create_inp_out(index)
         out = self.out_transform(torch.from_numpy(out))  # C, 32, 64
         inp = self.inp_transform(torch.from_numpy(inp))  # T, C, 32, 64
-        time = torch.from_numpy(time)
+        times = torch.from_numpy(times)
         if self.constants_data is not None:
             constant = (
                 torch.from_numpy(self.constants_data)
@@ -111,7 +111,7 @@ class Forecasting(Task):
             )
             constant = self.constant_transform(constant)
             inp = torch.cat((inp, constant), dim=1)
-        return inp, out, self.in_vars + self.constant_names, self.out_vars, time
+        return inp, out, times, self.in_vars + self.constant_names, self.out_vars
 
     def __len__(self) -> int:
         return len(self.inp_data) - ((self.history - 1) * self.window + self.pred_range)

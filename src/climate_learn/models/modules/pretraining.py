@@ -217,23 +217,48 @@ class PretrainingLitModule2(pl.LightningModule):
         max_epochs=100,
         warmup_start_lr=1e-8,
         eta_min=1e-8,
-        init_temp=np.log(0.07),
-        max_temp=np.log(100),
-        temp_lr=1e-2,
+        logit_temp=np.log(0.07),
+        max_logit_temp=np.log(100),
+        logit_temp_lr=1e-3,
         logit_scaling=True,
+        label_temp=1e-5,
+        label_temp_lr=1e-7,
+        label_scaling=True,
         loss="clip"
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=["net"])
+        self.save_hyperparameters(ignore=["net", "optimizer"])
         self.net = net
         self.optim_cls = optimizer
-        self.betas = betas
-        self.logit_scaling = logit_scaling
-        self.temperature = torch.tensor([init_temp], requires_grad=True)
-        self.max_temp = torch.tensor([max_temp], requires_grad=False)
-        self.temp_lr = temp_lr
-        assert loss in ("clip", "cyclip")
-        self.loss = loss        
+        self.logit_temp = torch.tensor([logit_temp], requires_grad=True)
+        self.max_logit_temp = torch.tensor([max_logit_temp], requires_grad=False)
+        self.label_temp = torch.tensor([label_temp], requires_grad=True)
+        self.start_of_epoch = torch.tensor(
+            np.array(
+                ["1979-01-01T00:00:00"],
+                dtype="datetime64[h]"
+            ).astype(float),
+            requires_grad=False
+        )
+        self.end_of_data = torch.tensor(
+            np.array(
+                ["2018-12-31T23:00:00"],
+                dtype="datetime64[h]"
+            ).astype(float),
+            requires_grad=False
+        )
+        self.send_to_device_tensors = (
+            self.logit_temp,
+            self.max_logit_temp,
+            self.label_temp,
+            self.start_of_epoch,
+            self.end_of_data
+        )
+        if loss not in ("clip", "cyclip"):
+            raise NotImplementedError(
+                f"loss {loss} not supported, pick either 'clip' or 'cyclip'"
+            )
+        self.loss = loss
 
     def forward(self, x):
         enc1 = F.normalize(self.net(x[:,:,0,:,:]))
@@ -251,8 +276,15 @@ class PretrainingLitModule2(pl.LightningModule):
             batch_size=len(batch[0])
         )
         self.log(
-            "temperature",
-            self.temperature,
+            "logit_temp",
+            self.logit_temp,
+            on_step=True,
+            on_epoch=False,
+            batch_size=len(batch[0])
+        )
+        self.log(
+            "label_temp",
+            self.label_temp,
             on_step=True,
             on_epoch=False,
             batch_size=len(batch[0])
@@ -271,8 +303,15 @@ class PretrainingLitModule2(pl.LightningModule):
             batch_size=len(batch[0])
         )
         self.log(
-            "temperature",
-            self.temperature,
+            "logit_temp",
+            self.logit_temp,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch[0])
+        )
+        self.log(
+            "label_temp",
+            self.label_temp,
             on_step=False,
             on_epoch=True,
             batch_size=len(batch[0])
@@ -290,8 +329,15 @@ class PretrainingLitModule2(pl.LightningModule):
             batch_size=len(batch[0])
         )
         self.log(
-            "temperature",
-            self.temperature,
+            "logit_temp",
+            self.logit_temp,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch[0])
+        )
+        self.log(
+            "label_temp",
+            self.label_temp,
             on_step=False,
             on_epoch=True,
             batch_size=len(batch[0])
@@ -299,42 +345,46 @@ class PretrainingLitModule2(pl.LightningModule):
         return loss
     
     def compute_loss(self, batch):
-        x, time = batch[0], batch[-1]
-        encodings = self(x)
-        if self.logit_scaling:
-            logit_scale = torch.exp(torch.min(
-                self.temperature,
-                self.max_temp
-            ))
+        x, times = batch[0], batch[2].flatten()
+        # Logit scaling
+        if self.hparams.logit_scaling:
+            logit_temp = self.logit_temp.clamp(max=self.max_logit_temp)
+            logit_scale = torch.exp(logit_temp)
         else:
             logit_scale = 1
-        logits = logit_scale * torch.stack((
+        # Label scaling
+        inv_label_scale = self.end_of_data - self.start_of_epoch
+        if self.hparams.label_scaling:
+            inv_label_scale *= self.label_temp
+        # Compute logits
+        encodings = self(x)
+        cross_modal_logits = logit_scale * torch.stack((
             torch.matmul(encodings[0], encodings[1].T),
             torch.matmul(encodings[1], encodings[0].T)
         ))
-        labels = 1- F.softmax(
-            torch.abs(
-                time.repeat((x.shape[0], 1))
-                - time.repeat((x.shape[0], 1)).T
-            ),
-            dim=0
-        )
+        # Compute labels
+        t = times.clone() / inv_label_scale
+        t = t.repeat((x.shape[0], 1))
+        labels = F.softmax(1 - torch.abs(t - t.T))
         labels.to(device=self.device)
+        # Compute loss
         clip_loss = (
-            F.cross_entropy(logits[0], labels)
-            + F.cross_entropy(logits[1], labels)
+            F.cross_entropy(cross_modal_logits[0], labels)
+            + F.cross_entropy(cross_modal_logits[1], labels)
         ) / 2
         if self.loss == "clip":
             loss = clip_loss
-        elif self.loss == "cyclip":
-            cross_modal_loss = torch.mean(torch.square(logits[0] - logits[1]))
-            self_logits = logit_scale * torch.stack((
+        elif self.loss == "cyclip":            
+            in_modal_logits = logit_scale * torch.stack((
                 torch.matmul(encodings[0], encodings[0].T),
                 torch.matmul(encodings[1], encodings[1].T)
-            )) / 2
-            in_modal_loss = torch.mean(torch.square(
-                self_logits[0] - self_logits[1]
-            )) / 2
+            ))
+            cross_modal_loss = torch.square(
+                cross_modal_logits[0] - cross_modal_logits[1]
+            ) / 2
+            in_modal_loss = torch.square(
+                in_modal_logits[0] - in_modal_logits[1]
+            ) / 2
             loss = clip_loss + cross_modal_loss + in_modal_loss
         return loss
     
@@ -346,12 +396,19 @@ class PretrainingLitModule2(pl.LightningModule):
                 "weight_decay": self.hparams.weight_decay
             },
             {
-                "params": self.temperature,
-                "lr": self.temp_lr
+                "params": self.logit_temp,
+                "lr": self.hparams.logit_temp_lr
+            },
+            {
+                "params": self.label_temp,
+                "lr": self.hparams.label_temp_lr
             }
         ]
-        optimizer = self.optim_cls(params, betas=self.betas)
-
+        adam_opts = (torch.optim.Adam, torch.optim.Adamax, torch.optim.AdamW)
+        if self.optim_cls in adam_opts:
+            optimizer = self.optim_cls(params, betas=self.hparams.betas)
+        else:
+            optimizer = self.optim_cls(params)
         lr_scheduler = LinearWarmupCosineAnnealingLR(
             optimizer,
             self.hparams.warmup_epochs,
@@ -362,16 +419,16 @@ class PretrainingLitModule2(pl.LightningModule):
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
     def on_train_start(self):
-        self.temperature = self.temperature.to(device=self.device)
-        self.max_temp = self.max_temp.to(device=self.device)
+        for tens in self.send_to_device_tensors:
+            tens.to(device=self.device)
 
     def on_validation_start(self):
-        self.temperature = self.temperature.to(device=self.device)
-        self.max_temp = self.max_temp.to(device=self.device)
+        for tens in self.send_to_device_tensors:
+            tens.to(device=self.device)
 
     def on_test_start(self):
-        self.temperature = self.temperature.to(device=self.device)
-        self.max_temp = self.max_temp.to(device=self.device)
+        for tens in self.send_to_device_tensors:
+            tens.to(device=self.device)
     
     def set_denormalization(self, mean, std):
         self.denormalization = transforms.Normalize(mean, std)
