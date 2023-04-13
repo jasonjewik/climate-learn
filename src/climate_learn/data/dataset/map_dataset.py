@@ -99,7 +99,7 @@ class MapDataset(Dataset):
 
         self.task.set_normalize(inp_transforms, out_transforms, const_transforms)
         self.climatology: Data = {
-            k: torch.mean(stacked_out_data[k], dim=0) for k in stacked_out_data
+            k: torch.mean(stacked_inp_data[k], dim=0) for k in stacked_inp_data
         }
 
     def setup(self) -> None:
