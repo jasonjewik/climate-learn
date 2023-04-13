@@ -11,6 +11,7 @@ class PretrainLitModule(pl.LightningModule):
     def __init__(
         self,
         net,
+        net2=None,
         optimizer=torch.optim.Adam,
         betas=(0.9,0.999),
         lr=5e-4,
@@ -29,8 +30,9 @@ class PretrainLitModule(pl.LightningModule):
         loss="clip"
     ):
         super().__init__()
-        self.save_hyperparameters(ignore=["net", "optimizer"])
+        self.save_hyperparameters(ignore=["net", "net2", "optimizer"])
         self.net = net
+        self.net2 = net2
         self.optim_cls = optimizer
         self.logit_temp = torch.tensor([logit_temp], requires_grad=True)
         self.max_logit_temp = torch.tensor([max_logit_temp], requires_grad=False)
@@ -42,15 +44,19 @@ class PretrainLitModule(pl.LightningModule):
             ).astype(float),
             requires_grad=False
         )
-        if loss not in ("clip", "cyclip"):
+        if loss not in ("clip", "cyclip", "time-clip", "time-cyclip"):
             raise NotImplementedError(
-                f"loss {loss} not supported, pick either 'clip' or 'cyclip'"
+                f"loss {loss} not supported"
             )
         self.loss = loss
 
     def forward(self, x):
-        enc1 = F.normalize(self.net(x[:,0].unsqueeze(1)))
-        enc2 = F.normalize(self.net(x[:,1].unsqueeze(1)))
+        x0, x1 = x[:,0].unsqueeze(1), x[:,1].unsqueeze(1)
+        enc1 = F.normalize(self.net(x0))
+        if self.net2:
+            enc2 = F.normalize(self.net2(x1))
+        else:
+            enc2 = F.normalize(self.net(x1))
         return torch.stack((enc1, enc2))
         
     def training_step(self, batch, batch_idx):
@@ -150,38 +156,42 @@ class PretrainLitModule(pl.LightningModule):
             torch.matmul(encodings[0], encodings[1].T),
             torch.matmul(encodings[1], encodings[0].T)
         ))
-        # Compute labels
-        t = times.clone() / inv_label_scale
-        t = t.repeat((x.shape[0], 1))
-        t = 1 - torch.abs(t - t.T)
-        row_labels = F.softmax(t, dim=0)
-        col_labels = F.softmax(t, dim=1)
-        row_labels.to(device=self.device)
-        col_labels.to(device=self.device)
+        in_modal_logits = logit_scale * torch.stack((
+            torch.matmul(encodings[0], encodings[0].T),
+            torch.matmul(encodings[1], encodings[1].T)
+        ))
         # Compute loss
-        row_clip_loss = (
-            F.cross_entropy(cross_modal_logits[0], row_labels)
-            + F.cross_entropy(cross_modal_logits[1], row_labels)
-        ) / 2
-        col_clip_loss = (
-            F.cross_entropy(cross_modal_logits[0], col_labels)
-            + F.cross_entropy(cross_modal_logits[1], col_labels)
-        ) / 2
-        clip_loss = row_clip_loss + col_clip_loss
-        if self.loss == "clip":
+        if self.loss in ("clip", "cyclip"):
+            labels = torch.eye(x.shape[0]).to(device=self.device)
+            clip_loss = (
+                F.cross_entropy(cross_modal_logits[0], labels)
+                + F.cross_entropy(cross_modal_logits[1], labels)
+            ) / 2
             loss = clip_loss
-        elif self.loss == "cyclip":            
-            in_modal_logits = logit_scale * torch.stack((
-                torch.matmul(encodings[0], encodings[0].T),
-                torch.matmul(encodings[1], encodings[1].T)
-            ))
+        elif self.loss in ("time-clip", "time-cyclip"):
+            t = times.clone() / inv_label_scale
+            t = t.repeat((x.shape[0], 1))
+            t = 1 - torch.abs(t - t.T)
+            row_labels = F.softmax(t, dim=0).to(device=self.device)
+            col_labels = F.softmax(t, dim=1).to(device=self.device)
+            row_clip_loss = (
+                F.cross_entropy(cross_modal_logits[0], row_labels)
+                + F.cross_entropy(cross_modal_logits[1], row_labels)
+            ) / 2
+            col_clip_loss = (
+                F.cross_entropy(cross_modal_logits[0], col_labels)
+                + F.cross_entropy(cross_modal_logits[1], col_labels)
+            ) / 2
+            loss = (row_clip_loss + col_clip_loss) / 2
+        if self.loss in ("cyclip", "time-cyclip"):
             cross_modal_loss = torch.mean(torch.square(
                 cross_modal_logits[0] - cross_modal_logits[1]
             )) / 2
             in_modal_loss = torch.mean(torch.square(
                 in_modal_logits[0] - in_modal_logits[1]
             )) / 2
-            loss = clip_loss + cross_modal_loss + in_modal_loss
+            cyclip_loss = (cross_modal_loss + in_modal_loss) / 2
+            loss += cyclip_loss   
         return loss
     
     def configure_optimizers(self):

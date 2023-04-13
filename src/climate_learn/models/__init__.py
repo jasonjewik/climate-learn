@@ -22,8 +22,11 @@ def load_model(name, task, model_kwargs, optim_kwargs):
         module = ForecastLitModule(model, **optim_kwargs)
     elif task == "downscaling":
         module = DownscaleLitModule(model, **optim_kwargs)
-    elif task == "pretraining":
+    elif task == "pretraining-shared":
         module = PretrainLitModule(model, **optim_kwargs)
+    elif task == "pretraining-separate":
+        model2 = model_cls(**model_kwargs)
+        module = PretrainLitModule(model, model2, **optim_kwargs)
     else:
         raise NotImplementedError("Only support foreacasting and downscaling")
 

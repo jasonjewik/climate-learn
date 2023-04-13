@@ -25,6 +25,7 @@ class Trainer:
         patience=5,
         early_stopping=False,
         task=None,
+        gradient_clip_val=0
     ):
         seed_everything(seed)
 
@@ -48,6 +49,8 @@ class Trainer:
                 monitor = "val/w_mse"
             elif task == "downscaling":
                 monitor = "val/mse"
+            elif "pretraining" in task:
+                monitor = "train_loss"
             else:
                 raise NotImplementedError(
                     "Please specify either forecasting or downscaling as the training task. Other tasks not available."
@@ -66,6 +69,7 @@ class Trainer:
             precision=precision,
             max_epochs=max_epochs,
             callbacks=callbacks,
+            gradient_clip_val=gradient_clip_val
         )
 
     def fit(self, model_module, data_module):
