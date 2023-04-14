@@ -24,9 +24,6 @@ class PretrainLitModule(pl.LightningModule):
         max_logit_temp=np.log(100),
         logit_temp_lr=1e-3,
         logit_scaling=True,
-        label_temp=1e-5,
-        label_temp_lr=1e-7,
-        label_scaling=True,
         loss="clip"
     ):
         super().__init__()
@@ -36,14 +33,6 @@ class PretrainLitModule(pl.LightningModule):
         self.optim_cls = optimizer
         self.logit_temp = torch.tensor([logit_temp], requires_grad=True)
         self.max_logit_temp = torch.tensor([max_logit_temp], requires_grad=False)
-        self.label_temp = torch.tensor([label_temp], requires_grad=True)
-        self.end_of_data = torch.tensor(
-            np.array(
-                ["2018-12-31T23:00:00"],
-                dtype="datetime64[h]"
-            ).astype(float),
-            requires_grad=False
-        )
         if loss not in ("clip", "cyclip", "time-clip", "time-cyclip"):
             raise NotImplementedError(
                 f"loss {loss} not supported"
@@ -76,13 +65,6 @@ class PretrainLitModule(pl.LightningModule):
             on_epoch=False,
             batch_size=len(batch[0])
         )
-        self.log(
-            "label_temp",
-            self.label_temp,
-            on_step=True,
-            on_epoch=False,
-            batch_size=len(batch[0])
-        )
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -99,13 +81,6 @@ class PretrainLitModule(pl.LightningModule):
         self.log(
             "logit_temp",
             self.logit_temp,
-            on_step=False,
-            on_epoch=True,
-            batch_size=len(batch[0])
-        )
-        self.log(
-            "label_temp",
-            self.label_temp,
             on_step=False,
             on_epoch=True,
             batch_size=len(batch[0])
@@ -129,13 +104,6 @@ class PretrainLitModule(pl.LightningModule):
             on_epoch=True,
             batch_size=len(batch[0])
         )
-        self.log(
-            "label_temp",
-            self.label_temp,
-            on_step=False,
-            on_epoch=True,
-            batch_size=len(batch[0])
-        )
         return loss
     
     def compute_loss(self, batch):
@@ -146,10 +114,6 @@ class PretrainLitModule(pl.LightningModule):
             logit_scale = torch.exp(logit_temp)
         else:
             logit_scale = 1
-        # Label scaling
-        inv_label_scale = self.end_of_data
-        if self.hparams.label_scaling:
-            inv_label_scale *= self.label_temp
         # Compute logits
         encodings = self(x)
         cross_modal_logits = logit_scale * torch.stack((
@@ -162,28 +126,27 @@ class PretrainLitModule(pl.LightningModule):
         ))
         # Compute loss
         if self.loss in ("clip", "cyclip"):
+            # Standard CLIP labels
             labels = torch.eye(x.shape[0]).to(device=self.device)
-            clip_loss = (
-                F.cross_entropy(cross_modal_logits[0], labels)
-                + F.cross_entropy(cross_modal_logits[1], labels)
-            ) / 2
-            loss = clip_loss
         elif self.loss in ("time-clip", "time-cyclip"):
-            t = times.clone() / inv_label_scale
-            t = t.repeat((x.shape[0], 1))
-            t = 1 - torch.abs(t - t.T)
-            row_labels = F.softmax(t, dim=0).to(device=self.device)
-            col_labels = F.softmax(t, dim=1).to(device=self.device)
-            row_clip_loss = (
-                F.cross_entropy(cross_modal_logits[0], row_labels)
-                + F.cross_entropy(cross_modal_logits[1], row_labels)
-            ) / 2
-            col_clip_loss = (
-                F.cross_entropy(cross_modal_logits[0], col_labels)
-                + F.cross_entropy(cross_modal_logits[1], col_labels)
-            ) / 2
-            loss = (row_clip_loss + col_clip_loss) / 2
+            # Labels follow a normal distribution centered at 0, 
+            # scaled so that at 0, the label is ~1,
+            # and by +-30, the label is ~0
+            t = times.clone().repeat((x.shape[0], 1))
+            t_delta = t - t.T
+            alpha, sigma = 20, 8
+            labels = (
+                alpha / (sigma * torch.sqrt(
+                    torch.tensor([2 * torch.pi], device=self.device)
+                )) * torch.exp(-0.5 * torch.square(t_delta / sigma))
+            )
+        clip_loss = (
+            F.cross_entropy(cross_modal_logits[0], labels)
+            + F.cross_entropy(cross_modal_logits[1], labels)
+        ) / 2
+        loss = clip_loss
         if self.loss in ("cyclip", "time-cyclip"):
+            # Standard CyCLIP loss
             cross_modal_loss = torch.mean(torch.square(
                 cross_modal_logits[0] - cross_modal_logits[1]
             )) / 2
@@ -204,10 +167,6 @@ class PretrainLitModule(pl.LightningModule):
             {
                 "params": self.logit_temp,
                 "lr": self.hparams.logit_temp_lr
-            },
-            {
-                "params": self.label_temp,
-                "lr": self.hparams.label_temp_lr
             }
         ]
         adam_opts = (torch.optim.Adam, torch.optim.Adamax, torch.optim.AdamW)
@@ -255,5 +214,3 @@ class PretrainLitModule(pl.LightningModule):
     def send_tensors_to_device(self):
         self.logit_temp = self.logit_temp.to(device=self.device)
         self.max_logit_temp = self.max_logit_temp.to(device=self.device)
-        self.label_temp = self.label_temp.to(device=self.device)
-        self.end_of_data = self.end_of_data.to(device=self.device)
