@@ -33,7 +33,11 @@ class PretrainLitModule(pl.LightningModule):
         self.optim_cls = optimizer
         self.logit_temp = torch.tensor([logit_temp], requires_grad=True)
         self.max_logit_temp = torch.tensor([max_logit_temp], requires_grad=False)
-        if loss not in ("clip", "cyclip", "time-clip", "time-cyclip"):
+        self.supported_losses = [
+            "clip", "time-clip", "l1-time-clip", "softmax-time-clip",
+            "cyclip", "time-cyclip", "l1-time-cyclip", "softmax-time-cyclip"
+        ]
+        if loss not in self.supported_losses:
             raise NotImplementedError(
                 f"loss {loss} not supported"
             )
@@ -128,7 +132,7 @@ class PretrainLitModule(pl.LightningModule):
         if self.loss in ("clip", "cyclip"):
             # Standard CLIP labels
             labels = torch.eye(x.shape[0]).to(device=self.device)
-        elif self.loss in ("time-clip", "time-cyclip"):
+        elif "time" in self.loss:
             # Labels follow a normal distribution centered at 0, 
             # scaled so that at 0, the label is ~1,
             # and by +-30, the label is ~0
@@ -139,23 +143,27 @@ class PretrainLitModule(pl.LightningModule):
                 torch.tensor([2 * torch.pi], device=self.device)
             ))
             labels = k * torch.exp(-0.5 * torch.square(t_delta / sigma))
-            labels = F.normalize(labels, p=1, dim=1)
+            # L1 normalization along rows
+            if "l1" in self.loss:
+                labels = F.normalize(labels, p=1, dim=1)                
+            # Softmax along rows
+            elif "softmax" in self.loss:
+                labels = F.softmax(labels, dim=1)
+            # Floor values close to 0
             labels = torch.where(labels > 1e-8, labels, 0)
-        clip_loss = (
+        loss = (
             F.cross_entropy(cross_modal_logits[0], labels)
             + F.cross_entropy(cross_modal_logits[1], labels)
         ) / 2
-        loss = clip_loss
-        if self.loss in ("cyclip", "time-cyclip"):
-            # Standard CyCLIP loss
+        if "cyclip" in self.loss:
+            # Unscaled CyCLIP loss
             cross_modal_loss = torch.mean(torch.square(
                 cross_modal_logits[0] - cross_modal_logits[1]
             )) / 2
             in_modal_loss = torch.mean(torch.square(
                 in_modal_logits[0] - in_modal_logits[1]
             )) / 2
-            cyclip_loss = (cross_modal_loss + in_modal_loss) / 2
-            loss += cyclip_loss   
+            loss += (cross_modal_loss + in_modal_loss) / 2
         return loss
     
     def configure_optimizers(self):

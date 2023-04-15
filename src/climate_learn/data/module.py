@@ -71,7 +71,7 @@ class NeighborhoodSampler(Sampler[int]):
         self.batch_size = batch_size
         self.neighborhood_size = neighborhood_size
         self.generator = generator
-        self.num_homes = int(self.num_samples / (0.02 * self.neighborhood_size))
+        self.num_homes = 2466  # to match the number of batches used by the random sampler
         self.homes = self.generate_homes()
         self.batch_idx = 0
 
@@ -235,13 +235,13 @@ class DataModule(LightningDataModule):
             sampler = NeighborhoodSampler(
                 len(self.train_dataset),
                 self.hparams.batch_size,
-                # years x months x weeks x days x hours / subsample
-                2*12*4*7*24 // self.train_dataset.task.subsample
+                # months x weeks/month x days/week x hours/day / subsample
+                3*4*7*24 // self.train_dataset.task.subsample
             )
             return self.build_dataloader(self.train_dataset, False, sampler)
 
     def val_dataloader(self) -> DataLoader:
-        return self.build_dataloader(self.val_dataset, False, None)
+        return self.build_dataloader(self.val_dataset, True, None)
 
     def test_dataloader(self) -> DataLoader:
-        return self.build_dataloader(self.test_dataset, False, None)
+        return self.build_dataloader(self.test_dataset, True, None)
