@@ -71,10 +71,8 @@ class NeighborhoodSampler(Sampler[int]):
         self.batch_size = batch_size
         self.neighborhood_size = neighborhood_size
         self.generator = generator
-        self.homes = torch.randperm(
-            self.num_samples-2*self.neighborhood_size,
-            generator=self.generator
-        ) + self.neighborhood_size
+        self.num_homes = int(self.num_samples / (0.02 * self.neighborhood_size))
+        self.homes = self.generate_homes()
         self.batch_idx = 0
 
     def __next__(self):        
@@ -91,12 +89,19 @@ class NeighborhoodSampler(Sampler[int]):
         return neighborhood[indices]
 
     def __iter__(self):
-        if self.batch_idx >= len(self.homes):
-            raise StopIteration
+        if self.batch_idx >= len(self):
+            self.generate_homes()
+            self.batch_idx = 0
         return self
 
     def __len__(self):
-        return self.num_samples
+        return self.num_homes
+    
+    def generate_homes(self):
+        return torch.randperm(
+            self.num_samples-2*self.neighborhood_size,
+            generator=self.generator
+        ) + self.neighborhood_size
 
 
 class DataModule(LightningDataModule):
