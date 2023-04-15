@@ -5,7 +5,7 @@ from typing import Callable, Dict, Sequence, Tuple, Union
 import numpy as np
 from pytorch_lightning import LightningDataModule
 import torch
-from torch.utils.data import DataLoader, IterableDataset
+from torch.utils.data import DataLoader, IterableDataset, Sampler, RandomSampler
 from torchvision.transforms import transforms
 
 # Local application
@@ -63,6 +63,40 @@ def get_data_class(dataset_args: DatasetArgs) -> Callable[..., Dataset]:
         return eval(dataset_args._data_class)
     else:
         return dataset_args._data_class
+    
+
+class NeighborhoodSampler(Sampler[int]):
+    def __init__(self, num_samples, batch_size, neighborhood_size, generator=None):
+        self.num_samples = num_samples
+        self.batch_size = batch_size
+        self.neighborhood_size = neighborhood_size
+        self.generator = generator
+        self.homes = torch.randperm(
+            self.num_samples-2*self.neighborhood_size,
+            generator=self.generator
+        ) + self.neighborhood_size
+        self.batch_idx = 0
+
+    def __next__(self):        
+        home = self.homes[self.batch_idx].item()
+        self.batch_idx += 1
+        neighborhood = torch.arange(
+            home-self.neighborhood_size,
+            home+self.neighborhood_size,
+        )
+        indices = torch.randperm(
+            self.neighborhood_size,
+            generator=self.generator
+        )[:self.batch_size]
+        return neighborhood[indices]
+
+    def __iter__(self):
+        if self.batch_idx >= self.homes:
+            raise StopIteration
+        return self
+
+    def __len__(self):
+        return self.num_samples
 
 
 class DataModule(LightningDataModule):
@@ -75,6 +109,7 @@ class DataModule(LightningDataModule):
         val_dataset_args: DatasetArgs,
         test_dataset_args: DatasetArgs,
         batch_size: int = 64,
+        sampler: str = "random",
         num_workers: int = 0,
         pin_memory: bool = False,
     ) -> None:
@@ -144,6 +179,9 @@ class DataModule(LightningDataModule):
             inp_transforms, out_transforms, const_transforms
         )
 
+        assert sampler in ("random", "neighborhood")
+        self.sampler = sampler
+
     def get_lat_lon(self) -> Tuple[Union[np.ndarray, None], Union[np.ndarray, None]]:
         return self.train_dataset.lat, self.train_dataset.lon
 
@@ -164,12 +202,12 @@ class DataModule(LightningDataModule):
             raise NotImplementedError
 
     def build_dataloader(
-        self, dataset: Union[MapDataset, ShardDataset], shuffle: bool
+        self, dataset: Union[MapDataset, ShardDataset], shuffle: bool, sampler: Sampler
     ) -> DataLoader:
         if isinstance(dataset, IterableDataset):
             return DataLoader(
                 dataset,
-                batch_size=self.hparams.batch_size,
+                batch_size=self.hparams.batch_size,                
                 num_workers=self.hparams.num_workers,
                 pin_memory=self.hparams.pin_memory,
                 collate_fn=collate_fn,
@@ -177,18 +215,28 @@ class DataModule(LightningDataModule):
         else:
             return DataLoader(
                 dataset,
+                batch_size=self.hparams.batch_size if sampler is None else 1,
                 shuffle=shuffle,
-                batch_size=self.hparams.batch_size,
+                batch_sampler=sampler,
                 num_workers=self.hparams.num_workers,
                 pin_memory=self.hparams.pin_memory,
                 collate_fn=collate_fn,
             )
 
     def train_dataloader(self) -> DataLoader:
-        return self.build_dataloader(self.train_dataset, True)
+        if self.sampler == "random":
+            return self.build_dataloader(self.train_dataset, True, None)
+        elif self.sampler == "neighborhood":
+            sampler = NeighborhoodSampler(
+                len(self.train_dataset),
+                self.hparams.batch_size,
+                # years x months x weeks x days x hours / subsample
+                2*12*4*7*24 // self.train_dataset.task.subsample
+            )
+            return self.build_dataloader(self.train_dataset, False, sampler)
 
     def val_dataloader(self) -> DataLoader:
-        return self.build_dataloader(self.val_dataset, False)
+        return self.build_dataloader(self.val_dataset, False, None)
 
     def test_dataloader(self) -> DataLoader:
-        return self.build_dataloader(self.test_dataset, False)
+        return self.build_dataloader(self.test_dataset, False, None)

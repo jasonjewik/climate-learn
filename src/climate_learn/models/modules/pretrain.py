@@ -135,11 +135,12 @@ class PretrainLitModule(pl.LightningModule):
             t = times.clone().repeat((x.shape[0], 1))
             t_delta = t - t.T
             alpha, sigma = 20, 8
-            labels = (
-                alpha / (sigma * torch.sqrt(
-                    torch.tensor([2 * torch.pi], device=self.device)
-                )) * torch.exp(-0.5 * torch.square(t_delta / sigma))
-            )
+            k = alpha / (sigma * torch.sqrt(
+                torch.tensor([2 * torch.pi], device=self.device)
+            ))
+            labels = k * torch.exp(-0.5 * torch.square(t_delta / sigma))
+            labels = F.normalize(labels, p=1, dim=1)
+            labels = torch.where(labels > 1e-8, labels, 0)
         clip_loss = (
             F.cross_entropy(cross_modal_logits[0], labels)
             + F.cross_entropy(cross_modal_logits[1], labels)
