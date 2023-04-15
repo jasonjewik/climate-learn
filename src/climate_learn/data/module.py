@@ -91,7 +91,7 @@ class NeighborhoodSampler(Sampler[int]):
         return neighborhood[indices]
 
     def __iter__(self):
-        if self.batch_idx >= self.homes:
+        if self.batch_idx >= len(self.homes):
             raise StopIteration
         return self
 
