@@ -106,6 +106,69 @@ class ResidualBlock(nn.Module):
         return h + self.shortcut(x)
 
 
+class ResNeXtBlock(nn.Module):
+    # Adapted from https://d2l.ai/chapter_convolutional-modern/resnet.html#resnext
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 num_groups,
+                 bot_mult,
+                 use_1x1conv=False,
+                 stride=1,
+                 activation="relu",
+                 dropout=0.3
+                ):
+        super().__init__()
+        bot_channels = int(round(in_channels * bot_mult))
+        self.conv1 = nn.Conv2d(in_channels, bot_channels, kernel_size=1, stride=1)
+        self.conv2 = nn.Conv2d(
+            bot_channels,
+            bot_channels,
+            kernel_size=3,
+            stride=stride,
+            padding=1,
+            groups=bot_channels//num_groups
+        )
+        self.conv3 = nn.Conv2d(
+            bot_channels,
+            out_channels,
+            kernel_size=1,
+            stride=1
+        )
+        self.bn1 = nn.BatchNorm2d(in_channels)
+        self.bn2 = nn.BatchNorm2d(bot_channels)
+        self.bn3 = nn.BatchNorm2d(out_channels)
+        if use_1x1conv:
+            self.proj = nn.Sequential(
+                nn.Conv2d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=1,
+                    stride=stride
+                ),
+                nn.BatchNorm2d(out_channels)
+            )
+        else:
+            self.proj = nn.Identity()
+        if activation == "relu":
+            self.activation = nn.ReLU()
+        elif activation == "leaky-relu":
+            self.activation = nn.LeakyReLU()
+        elif activation.startswith("leaky-relu"):
+            neg_slope = float(activation.split("-")[-1])
+            self.activation = nn.LeakyReLU(neg_slope)
+        else:
+            raise NotImplementedError()
+        self.drop = nn.Dropout(dropout)
+            
+    def forward(self, x):
+        h = self.activation(self.bn1(self.drop(self.conv1(x))))
+        h = self.activation(self.bn2(self.drop(self.conv2(h))))
+        h = self.bn3(self.drop(self.conv3(h)))
+        x = self.proj(x)
+        return self.activation(h + x)
+
+
 class AttentionBlock(nn.Module):
     """### Attention block This is similar to [transformer multi-head
     attention](../../transformers/mha.html)."""

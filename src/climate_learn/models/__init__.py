@@ -15,6 +15,8 @@ def load_model(name, task, model_kwargs, optim_kwargs):
         model_cls = Unet
     elif name == "encoder":
         model_cls = Encoder
+    elif name == "encoder2":
+        model_cls = Encoder2
 
     model = model_cls(**model_kwargs)
 

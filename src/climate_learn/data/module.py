@@ -241,7 +241,7 @@ class DataModule(LightningDataModule):
             return self.build_dataloader(self.train_dataset, False, sampler)
 
     def val_dataloader(self) -> DataLoader:
-        return self.build_dataloader(self.val_dataset, True, None)
+        return self.build_dataloader(self.val_dataset, False, None)
 
     def test_dataloader(self) -> DataLoader:
-        return self.build_dataloader(self.test_dataset, True, None)
+        return self.build_dataloader(self.test_dataset, False, None)

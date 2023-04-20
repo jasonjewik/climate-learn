@@ -131,7 +131,7 @@ class PretrainLitModule(pl.LightningModule):
         # Compute loss
         if self.loss in ("clip", "cyclip"):
             # Standard CLIP labels
-            labels = torch.eye(x.shape[0]).to(device=self.device)
+            labels = torch.arange(x.shape[0]).to(device=self.device)
         elif "time" in self.loss:
             # Labels follow a normal distribution centered at 0, 
             # scaled so that at 0, the label is ~1,
