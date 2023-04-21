@@ -99,7 +99,7 @@ class MapDataset(Dataset):
 
         self.task.set_normalize(inp_transforms, out_transforms, const_transforms)
         self.climatology: Data = {
-            k: torch.mean(stacked_inp_data[k], dim=0) for k in stacked_inp_data
+            k: torch.mean(stacked_inp_data[k], dim=(0,1)) for k in stacked_inp_data
         }
 
     def setup(self) -> None:
@@ -183,12 +183,12 @@ class MapDataset(Dataset):
         inp_data, out_data = self.task.create_inp_out(raw_data, constants_data)
         # hotfix to get time data: would be better if I could get time from
         # task.create_inp_out instead of overriding out_data here
-        out_data = {
-            "time": torch.tensor(
-                self.data.get_time()[raw_index]
-                .astype("datetime64[h]").astype(float)
-            )
-        }
+        # out_data = {
+        #     "time": torch.tensor(
+        #         self.data.get_time()[raw_index]
+        #         .astype("datetime64[h]").astype(float)
+        #     )
+        # }
         return inp_data, out_data, const_data
 
     def __len__(self) -> int:

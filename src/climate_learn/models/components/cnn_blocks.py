@@ -111,25 +111,43 @@ class ResNeXtBlock(nn.Module):
     def __init__(self,
                  in_channels,
                  out_channels,
-                 num_groups,
-                 bot_mult,
-                 use_1x1conv=False,
-                 stride=1,
+                 num_groups=16,
+                 bot_mult=1,
+                 proj_input=False,
                  activation="relu",
-                 dropout=0.3
+                 dropout=0.3,
+                 mode="preserve"
                 ):
         super().__init__()
         bot_channels = int(round(in_channels * bot_mult))
-        self.conv1 = nn.Conv2d(in_channels, bot_channels, kernel_size=1, stride=1)
-        self.conv2 = nn.Conv2d(
+        if mode == "preserve":
+            conv = nn.Conv2d
+            stride = 1
+        elif mode == "downsample":
+            conv = nn.Conv2d
+            if not proj_input:
+                proj_input = True
+                raise RuntimeWarning("proj_input set to True for downsampling")
+            stride = 2
+        elif mode == "upsample":
+            conv = nn.ConvTranspose2d
+            if not proj_input:
+                proj_input = True
+                raise RuntimeWarning("proj_input set to True for upsampling")
+            stride = 2
+        else:
+            raise NotImplementedError(f"mode {mode} not implemented")
+        self.conv1 = conv(in_channels, bot_channels, kernel_size=1, stride=1)
+        bot_kernel_size = 4 if mode == "upsample" else 3
+        self.conv2 = conv(
             bot_channels,
             bot_channels,
-            kernel_size=3,
+            kernel_size=bot_kernel_size,
             stride=stride,
             padding=1,
             groups=bot_channels//num_groups
         )
-        self.conv3 = nn.Conv2d(
+        self.conv3 = conv(
             bot_channels,
             out_channels,
             kernel_size=1,
@@ -138,14 +156,18 @@ class ResNeXtBlock(nn.Module):
         self.bn1 = nn.BatchNorm2d(in_channels)
         self.bn2 = nn.BatchNorm2d(bot_channels)
         self.bn3 = nn.BatchNorm2d(out_channels)
-        if use_1x1conv:
+        if proj_input:
+            proj_kernel_size = 4 if mode == "upsample" else 1
+            proj_padding = 1 if mode == "upsample" else 0
             self.proj = nn.Sequential(
-                nn.Conv2d(
+                conv(
                     in_channels,
                     out_channels,
-                    kernel_size=1,
-                    stride=stride
+                    kernel_size=proj_kernel_size,
+                    stride=stride,
+                    padding=proj_padding
                 ),
+                nn.Dropout(dropout),
                 nn.BatchNorm2d(out_channels)
             )
         else:

@@ -3,6 +3,7 @@ from .utils.lr_scheduler import LinearWarmupCosineAnnealingLR
 import numpy as np
 import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 from torchvision.transforms import transforms
 import torch.nn.functional as F
 
@@ -14,15 +15,15 @@ class PretrainLitModule(pl.LightningModule):
         net2=None,
         optimizer=torch.optim.Adam,
         betas=(0.9,0.999),
-        lr=5e-4,
-        weight_decay=0.2,
+        lr=0.01,
+        weight_decay=0.1,
         warmup_epochs=5,
         max_epochs=100,
         warmup_start_lr=1e-8,
         eta_min=1e-8,
-        logit_temp=np.log(0.07),
-        max_logit_temp=np.log(100),
-        logit_temp_lr=1e-3,
+        logit_temp=torch.e,
+        max_logit_temp=10,
+        logit_temp_lr=0.1,
         logit_scaling=True,
         loss="clip"
     ):
@@ -31,8 +32,13 @@ class PretrainLitModule(pl.LightningModule):
         self.net = net
         self.net2 = net2
         self.optim_cls = optimizer
-        self.logit_temp = torch.tensor([logit_temp], requires_grad=True)
-        self.max_logit_temp = torch.tensor([max_logit_temp], requires_grad=False)
+        self.logit_temp = nn.parameter.Parameter(
+            torch.tensor([logit_temp], requires_grad=True)
+        )
+        self.max_logit_temp = torch.tensor(
+            [max_logit_temp],
+            requires_grad=False
+        )
         self.supported_losses = [
             "clip", "time-clip", "l1-time-clip", "softmax-time-clip",
             "cyclip", "time-cyclip", "l1-time-cyclip", "softmax-time-cyclip"
@@ -42,15 +48,17 @@ class PretrainLitModule(pl.LightningModule):
                 f"loss {loss} not supported"
             )
         self.loss = loss
+        self.criterion = nn.CrossEntropyLoss()
 
     def forward(self, x):
-        x0, x1 = x[:,0].unsqueeze(1), x[:,1].unsqueeze(1)
-        enc1 = F.normalize(self.net(x0))
-        if self.net2:
-            enc2 = F.normalize(self.net2(x1))
+        yhat0 = self.net(x[:,0].unsqueeze(1))
+        if self.net2 is None:
+            yhat1 = self.net(x[:,1].unsqueeze(1))
         else:
-            enc2 = F.normalize(self.net(x1))
-        return torch.stack((enc1, enc2))
+            yhat1 = self.net2(x[:,1].unsqueeze(1))
+        yhat0_norm = F.normalize(yhat0)
+        yhat1_norm = F.normalize(yhat1)
+        return torch.stack((yhat0_norm, yhat1_norm))
         
     def training_step(self, batch, batch_idx):
         loss = self.compute_loss(batch)
@@ -115,18 +123,15 @@ class PretrainLitModule(pl.LightningModule):
         # Logit scaling
         if self.hparams.logit_scaling:
             logit_temp = self.logit_temp.clamp(max=self.max_logit_temp)
-            logit_scale = torch.exp(logit_temp)
+            logit_scale = logit_temp.exp()
         else:
             logit_scale = 1
         # Compute logits
-        encodings = self(x)
-        cross_modal_logits = logit_scale * torch.stack((
-            torch.matmul(encodings[0], encodings[1].T),
-            torch.matmul(encodings[1], encodings[0].T)
-        ))
+        embeddings = self(x)
+        cross_modal_logits = logit_scale * (embeddings[0] @ embeddings[1].T)
         in_modal_logits = logit_scale * torch.stack((
-            torch.matmul(encodings[0], encodings[0].T),
-            torch.matmul(encodings[1], encodings[1].T)
+            embeddings[0] @ embeddings[0].T,
+            embeddings[1] @ embeddings[1].T
         ))
         # Compute loss
         if self.loss in ("clip", "cyclip"):
@@ -152,8 +157,8 @@ class PretrainLitModule(pl.LightningModule):
             # Floor values close to 0
             labels = torch.where(labels > 1e-8, labels, 0)
         loss = (
-            F.cross_entropy(cross_modal_logits[0], labels)
-            + F.cross_entropy(cross_modal_logits[1], labels)
+            self.criterion(cross_modal_logits, labels)
+            + self.criterion(cross_modal_logits.T, labels)
         ) / 2
         if "cyclip" in self.loss:
             # Unscaled CyCLIP loss
@@ -167,22 +172,27 @@ class PretrainLitModule(pl.LightningModule):
         return loss
     
     def configure_optimizers(self):
-        params = [
-            {
-                "params": self.net.parameters(),
+        parameters = []
+        parameters.append({
+            "params": self.net.parameters(),
+            "lr": self.hparams.lr,
+            "weight_decay": self.hparams.weight_decay
+        })
+        if self.net2:
+            parameters.append({
+                "params": self.net2.parameters(),
                 "lr": self.hparams.lr,
                 "weight_decay": self.hparams.weight_decay
-            },
-            {
-                "params": self.logit_temp,
-                "lr": self.hparams.logit_temp_lr
-            }
-        ]
+            })
+        parameters.append({
+            "params": self.logit_temp,
+            "lr": self.hparams.logit_temp_lr
+        })
         adam_opts = (torch.optim.Adam, torch.optim.Adamax, torch.optim.AdamW)
         if self.optim_cls in adam_opts:
-            optimizer = self.optim_cls(params, betas=self.hparams.betas)
+            optimizer = self.optim_cls(parameters, betas=self.hparams.betas)
         else:
-            optimizer = self.optim_cls(params)
+            optimizer = self.optim_cls(parameters)
         lr_scheduler = LinearWarmupCosineAnnealingLR(
             optimizer,
             self.hparams.warmup_epochs,

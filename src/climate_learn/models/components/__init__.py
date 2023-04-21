@@ -1,4 +1,3 @@
 from .vit import VisionTransformer
-from .resnet import ResNet
+from .resnet import ResNet, ResNeXtEncoder, ResNeXtDecoder, ResNeXtForecaster
 from .unet import Unet
-from .encoder import DummyEncoder, Encoder, Encoder2

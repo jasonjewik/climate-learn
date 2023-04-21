@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from .cnn_blocks import PeriodicConv2D, ResidualBlock
+from .cnn_blocks import PeriodicConv2D, ResidualBlock, ResNeXtBlock
 
 # Large based on https://github.com/labmlai/annotated_deep_learning_paper_implementations/blob/master/labml_nn/diffusion/ddpm/unet.py
 # MIT License
@@ -99,3 +99,143 @@ class ResNet(nn.Module):
             m(pred, y, transform, out_variables, lat, clim, log_postfix)
             for m in metrics
         ], pred
+
+
+class ResNeXtEncoder(nn.Module):
+    def __init__(self,
+                 filters=[64,128,256],
+                 downsample=[True,True,True],
+                 out_channels=512,
+                 proj_dim=512,
+                 embed_dim=512,
+                 dropout=0.3,
+                 activation="leaky-relu",
+                 mode="pretraining"
+                ):
+        super().__init__()
+        assert len(filters) == len(downsample)
+        self.image_proj = nn.Conv2d(1, filters[0], 7, 2, 3)
+        res_blocks = {}
+        for i in range(len(filters)):
+            in_ch = filters[i]
+            out_ch = filters[i+1] if i < len(filters)-1 else out_channels
+            res_mode = "downsample" if downsample[i] else "preserve"
+            res_blocks[f"res{i}"] = nn.Sequential(
+                ResNeXtBlock(
+                    in_ch,
+                    in_ch,
+                    proj_input=True,
+                    activation=activation,
+                    dropout=dropout
+                ),
+                ResNeXtBlock(
+                    in_ch,
+                    in_ch,
+                    activation=activation,
+                    dropout=dropout
+                ),
+                ResNeXtBlock(
+                    in_ch,
+                    out_ch, 
+                    proj_input=True,
+                    activation=activation,
+                    dropout=dropout,
+                    mode=res_mode
+                )
+            )
+        self.res_blocks = nn.ModuleDict(res_blocks)
+        self.num_res_blocks = len(filters)
+        if mode == "pretraining":
+            ftr_proj = nn.Sequential(
+                nn.Conv2d(out_channels, proj_dim, 1),
+                nn.BatchNorm2d(proj_dim)
+            )
+            num_downsample = downsample.count(True) + 1
+            out_img_height = 32 // (2**num_downsample)
+            out_img_width = 64 // (2**num_downsample)
+            linear_in_dim = proj_dim * out_img_height * out_img_width
+            mlp = nn.Sequential(
+                nn.Flatten(),
+                nn.Linear(linear_in_dim, embed_dim)
+            )
+            self.proj_head = nn.Sequential(ftr_proj, mlp)
+            self.final = self.proj_head
+        elif mode == "task":
+            self.final = nn.Identity()
+        else:
+            raise NotImplementedError()
+    
+    def forward(self, x):
+        h = self.image_proj(x)
+        for i in range(self.num_res_blocks):
+            block = self.res_blocks[f"res{i}"]
+            h = block(h)
+        h = self.final(h)
+        return h
+    
+
+class ResNeXtDecoder(nn.Module):
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 filters=[512,512,512],
+                 upsample=[True,True,True],
+                 dropout=0.3,
+                 activation="leaky-relu",
+                ):
+        super().__init__()
+        assert len(filters) == len(upsample)
+        self.ftr_proj = nn.ConvTranspose2d(in_channels, filters[0], 4, 2, 1)
+        res_blocks = {}
+        for i in range(len(filters)):
+            in_ch = filters[i]
+            out_ch = filters[i+1] if i < len(filters)-1 else out_channels
+            res_mode = "upsample" if upsample[i] else "preserve"
+            res_blocks[f"res{i}"] = nn.Sequential(
+                ResNeXtBlock(
+                    in_ch,
+                    in_ch,
+                    proj_input=True,
+                    activation=activation,
+                    dropout=dropout
+                ),
+                ResNeXtBlock(
+                    in_ch,
+                    in_ch,
+                    activation=activation,
+                    dropout=dropout
+                ),
+                ResNeXtBlock(
+                    in_ch,
+                    out_ch, 
+                    proj_input=True,
+                    activation=activation,
+                    dropout=dropout,
+                    mode=res_mode
+                )
+            )
+        self.res_blocks = nn.ModuleDict(res_blocks)
+        self.num_res_blocks = len(filters)        
+    
+    def forward(self, x):
+        h = self.ftr_proj(x)
+        for i in range(self.num_res_blocks):
+            block = self.res_blocks[f"res{i}"]
+            h = block(h)
+        return h
+    
+
+class ResNeXtForecaster(nn.Module):
+    def __init__(self, encoders, decoder):
+        super().__init__()
+        self.encoders = encoders
+        self.decoder = decoder
+        
+    def forward(self, x):
+        embeds = []
+        for i, enc in enumerate(self.encoders):
+            embed = enc(x[:,i].unsqueeze(1))
+            embeds.append(embed)
+        h = torch.cat(embeds, 1)
+        yhat = self.decoder(h)
+        return yhat
