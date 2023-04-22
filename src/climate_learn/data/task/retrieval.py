@@ -2,19 +2,19 @@
 from typing import Callable, Dict, Tuple
 
 # Local application
-from .task import Task
-from climate_learn.data.task.args import PretrainingArgs
+from climate_learn.data.task.task import Task
+from climate_learn.data.task.args import RetrievalArgs
 
 # Third party
 import torch
 
-Data = Dict[str, torch.Tensor]
+Data = Dict[str, torch.tensor]
 
 
-class Pretraining(Task):
-    _args_class: Callable[..., PretrainingArgs] = PretrainingArgs
+class Retrieval(Task):
+    _args_class: Callable[..., RetrievalArgs] = RetrievalArgs
 
-    def __init__(self, task_args: PretrainingArgs):
+    def __init__(self, task_args: RetrievalArgs):
         super().__init__(task_args)
         self.vars = task_args.in_vars
         
@@ -43,5 +43,6 @@ class Pretraining(Task):
                 for k in self.in_vars
             }
         return inp_data, {}
-    
-PretrainingArgs._task_class = Pretraining
+
+
+RetrievalArgs._task_class = Retrieval

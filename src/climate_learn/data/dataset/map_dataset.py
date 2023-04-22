@@ -181,14 +181,13 @@ class MapDataset(Dataset):
         raw_index: Union[Sequence[int], int] = self.task.get_raw_index(index)
         raw_data: Data = self.data.get_item(raw_index)
         inp_data, out_data = self.task.create_inp_out(raw_data, constants_data)
-        # hotfix to get time data: would be better if I could get time from
-        # task.create_inp_out instead of overriding out_data here
-        # out_data = {
-        #     "time": torch.tensor(
-        #         self.data.get_time()[raw_index]
-        #         .astype("datetime64[h]").astype(float)
-        #     )
-        # }
+        if isinstance(self.task, Retrieval):
+            out_data = {
+                "time": torch.tensor(
+                    self.data.get_time()[raw_index]
+                    .astype("datetime64[h]").astype(float)
+                )
+            }
         return inp_data, out_data, const_data
 
     def __len__(self) -> int:
