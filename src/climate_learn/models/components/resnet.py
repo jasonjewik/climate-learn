@@ -145,32 +145,29 @@ class ResNeXtEncoder(nn.Module):
             )
         self.res_blocks = nn.ModuleDict(res_blocks)
         self.num_res_blocks = len(filters)
-        if mode == "pretraining":
-            ftr_proj = nn.Sequential(
-                nn.Conv2d(out_channels, proj_dim, 1),
-                nn.BatchNorm2d(proj_dim)
-            )
-            num_downsample = downsample.count(True) + 1
-            out_img_height = 32 // (2**num_downsample)
-            out_img_width = 64 // (2**num_downsample)
-            linear_in_dim = proj_dim * out_img_height * out_img_width
-            mlp = nn.Sequential(
-                nn.Flatten(),
-                nn.Linear(linear_in_dim, embed_dim)
-            )
-            self.proj_head = nn.Sequential(ftr_proj, mlp)
-            self.final = self.proj_head
-        elif mode == "task":
-            self.final = nn.Identity()
-        else:
-            raise NotImplementedError()
+        ftr_proj = nn.Sequential(
+            nn.Conv2d(out_channels, proj_dim, 1),
+            nn.BatchNorm2d(proj_dim)
+        )
+        num_downsample = downsample.count(True) + 1
+        out_img_height = 32 // (2**num_downsample)
+        out_img_width = 64 // (2**num_downsample)
+        linear_in_dim = proj_dim * out_img_height * out_img_width
+        mlp = nn.Sequential(
+            nn.Flatten(),
+            nn.Linear(linear_in_dim, embed_dim)
+        )
+        self.proj_head = nn.Sequential(ftr_proj, mlp)
+        self.final = self.proj_head
+        self.mode = mode
     
     def forward(self, x):
         h = self.image_proj(x)
         for i in range(self.num_res_blocks):
             block = self.res_blocks[f"res{i}"]
             h = block(h)
-        h = self.final(h)
+        if self.mode == "pretraining":
+            h = self.final(h)
         return h
     
 
@@ -226,16 +223,47 @@ class ResNeXtDecoder(nn.Module):
     
 
 class ResNeXtForecaster(nn.Module):
-    def __init__(self, encoders, decoder):
+    def __init__(self, encoders, decoder, freeze_encoders=True):
         super().__init__()
+        if freeze_encoders:
+            for enc in encoders:
+                for param in enc.parameters():
+                    param.requires_grad = False
         self.encoders = encoders
         self.decoder = decoder
-        
-    def forward(self, x):
+
+    def predict(self, x):
+        if len(x.shape) == 4:
+            h = self.get_embeddings(x)
+        elif len(x.shape) == 5:
+            embeds = []
+            for i in range(x.shape[1]):
+                embeds.append(self.get_embeddings(x[:,i]))
+            h = torch.stack(embeds, 1)
+            h = h.flatten(1, 2)
+        yhat = self.decoder(h)
+        return yhat
+    
+    def get_embeddings(self, x):
         embeds = []
         for i, enc in enumerate(self.encoders):
             embed = enc(x[:,i].unsqueeze(1))
             embeds.append(embed)
         h = torch.cat(embeds, 1)
-        yhat = self.decoder(h)
-        return yhat
+        return h
+        
+    def forward(self, x, y, out_variables, metric, lat, log_postfix):
+        pred = self.predict(x)
+        return [
+            m(pred, y, out_variables, lat=lat, log_postfix=log_postfix)
+            for m in metric
+        ], x
+    
+    def evaluate(
+        self, x, y, variables, out_variables, transform, metrics, lat, clim, log_postfix
+    ):
+        pred = self.predict(x)
+        return [
+            m(pred, y, transform, out_variables, lat, clim, log_postfix)
+            for m in metrics
+        ], pred

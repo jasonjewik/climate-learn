@@ -242,11 +242,11 @@ class ForecastLitModule(LightningModule):
         optimizer = self.optim_cls(
             [
                 {
-                    "params": decay,
+                    "params": filter(lambda p: p.requires_grad, decay),
                     "lr": self.hparams.lr,
                     "weight_decay": self.hparams.weight_decay,
                 },
-                {"params": no_decay, "lr": self.hparams.lr, "weight_decay": 0},
+                {"params": filter(lambda p: p.requires_grad, no_decay), "lr": self.hparams.lr, "weight_decay": 0},
             ]
         )
 
