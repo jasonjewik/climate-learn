@@ -38,9 +38,10 @@ def collate_fn(
     def handle_dict_features(t: Dict[str, torch.tensor]) -> torch.tensor:
         ## Hotfix for the models to work with dict style data
         t = tuple(t.values())
-        if len(t) == 0:
-            return
-        t = torch.stack(t)
+        if len(t) > 0:
+            t = torch.stack(t)
+        else:
+            return None
         ## Handles the case for forecasting input as it has history in it
         ## TODO: Come up with an efficient solution instead of if condition
         if len(t.size()) == 4:
@@ -56,11 +57,10 @@ def collate_fn(
         ]
     )
     out = [handle_dict_features(batch[i][1]) for i in range(len(batch))]
-    out = list(filter(None, out))
-    if len(out) > 0:
-        out = torch.stack(out)
+    if None in out:
+        out = None        
     else:
-        out = torch.zeros_like(inp)
+        out = torch.stack(out)
     variables = list(batch[0][0].keys()) + list(batch[0][2].keys())
     out_variables = list(batch[0][1].keys())
     return inp, out, variables, out_variables

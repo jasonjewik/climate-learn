@@ -121,7 +121,8 @@ class PretrainLitModule(pl.LightningModule):
         return loss
     
     def compute_loss(self, batch):
-        x, times = batch[0], batch[1].flatten()
+        x = batch[0]
+        times = batch[1] # fix this! batch[1] is currently None for pretraining
         # Logit scaling
         if self.hparams.logit_scaling:
             logit_temp = self.logit_temp.clamp(max=self.max_logit_temp)
