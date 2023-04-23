@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 from torchvision.transforms import transforms
 import torch.nn.functional as F
+from torch.optim.lr_scheduler import ExponentialLR
 
 
 class PretrainLitModule(pl.LightningModule):
@@ -21,6 +22,7 @@ class PretrainLitModule(pl.LightningModule):
         max_epochs=100,
         warmup_start_lr=1e-8,
         eta_min=1e-8,
+        gamma=None,
         logit_temp=torch.e,
         max_logit_temp=10,
         logit_temp_lr=0.1,
@@ -193,13 +195,16 @@ class PretrainLitModule(pl.LightningModule):
             optimizer = self.optim_cls(parameters, betas=self.hparams.betas)
         else:
             optimizer = self.optim_cls(parameters)
-        lr_scheduler = LinearWarmupCosineAnnealingLR(
-            optimizer,
-            self.hparams.warmup_epochs,
-            self.hparams.max_epochs,
-            self.hparams.warmup_start_lr,
-            self.hparams.eta_min
-        )
+        if self.hparams.gamma:
+            lr_scheduler = ExponentialLR(optimizer, self.hparams.gamma)
+        else:
+            lr_scheduler = LinearWarmupCosineAnnealingLR(
+                optimizer,
+                self.hparams.warmup_epochs,
+                self.hparams.max_epochs,
+                self.hparams.warmup_start_lr,
+                self.hparams.eta_min
+            )    
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
     def on_train_start(self):
