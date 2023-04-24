@@ -51,6 +51,10 @@ class Trainer:
                 monitor = "val/mse"
             elif "pretraining" in task:
                 monitor = "train_loss"
+            elif task == "embed-decoding":
+                monitor = "val_loss"
+            elif task == "encoded-forecasting":
+                monitor = "val_loss"
             else:
                 raise NotImplementedError(
                     "Please specify either forecasting or downscaling as the training task. Other tasks not available."

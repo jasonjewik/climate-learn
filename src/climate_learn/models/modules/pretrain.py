@@ -205,7 +205,7 @@ class PretrainLitModule(pl.LightningModule):
                 self.hparams.max_epochs,
                 self.hparams.warmup_start_lr,
                 self.hparams.eta_min
-            )    
+            )
         return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
 
     def on_train_start(self):
@@ -239,3 +239,211 @@ class PretrainLitModule(pl.LightningModule):
     def send_tensors_to_device(self):
         self.logit_temp = self.logit_temp.to(device=self.device)
         self.max_logit_temp = self.max_logit_temp.to(device=self.device)
+
+
+
+class EncodedForecastLitModule(pl.LightningModule):
+    def __init__(self,
+        encoders,
+        forecaster,
+        lr=5e-4,
+        weight_decay=0.1,
+        warmup_epochs=5,
+        max_epochs=100,
+        warmup_start_lr=1e-8,
+        eta_min=1e-8
+    ):
+        super().__init__()
+        self.save_hyperparameters(ignore=["encoders", "cnn_lstm"])
+        self.encoders = encoders
+        self.forecaster = forecaster
+        self.criterion = nn.MSELoss()
+    
+    def forward(self, X):
+        # X.shape = [B,T,C,H,W]
+        H = []
+        for i in range(X.shape[1]):
+            Hi = []
+            for j in range(X.shape[2]):
+                xj = X[:,i,j].unsqueeze(1)
+                # xj.shape = [B,1,H,W]
+                hj = self.encoders[j](xj)
+                # hj.shape = [B,embed_dim,embed_h,embed_w]
+                Hi.append(hj)
+            Hi = torch.stack(Hi, 1)
+            H.append(Hi)
+        H = torch.stack(H, 2)
+        # H.shape = [B,T,C,embed_dim*C,embed_h,embed_w]
+        
+        H_hat = []
+        for i in range(H.shape[2]):
+            h_hat, _ = self.forecaster(H[:,:,i])
+            # h_hat[0].shape = [B,T,embed_dim,embed_h,embed_w]
+            H_hat.append(h_hat[0])
+        H_hat = torch.stack(H_hat, 1)
+        # H_hat.shape = [B,T,embed_dim*C,embed_h,embed_w]
+        
+        # y_hat.shape = [B,embed_dim*C,embed_h,embed_w]
+        y_hat = H_hat[:,-1]
+        return y_hat
+    
+    def training_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log("train_loss", loss, on_step=True, on_epoch=False, prog_bar=True, batch_size=len(batch[0]))
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=len(batch[0]))
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log("test_loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=len(batch[0]))
+        return loss
+        
+    def compute_loss(self, batch):
+        x, y = batch[0], batch[1]
+        encoded_yhat = self(x)
+        with torch.no_grad():
+            encoded_y = self(y.unsqueeze(1))
+        return self.criterion(encoded_yhat, encoded_y)
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            self.forecaster.parameters(),
+            self.hparams.lr,
+            weight_decay=self.hparams.weight_decay
+        )
+        lr_scheduler = LinearWarmupCosineAnnealingLR(
+            optimizer,
+            self.hparams.warmup_epochs,
+            self.hparams.max_epochs,
+            self.hparams.warmup_start_lr,
+            self.hparams.eta_min
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": lr_scheduler
+        }
+
+    def set_denormalization(self, mean, std):
+        self.denormalization = transforms.Normalize(mean, std)
+
+    def set_lat_lon(self, lat, lon):
+        self.lat = lat
+        self.lon = lon
+
+    def set_pred_range(self, r):
+        self.pred_range = r
+
+    def set_train_climatology(self, clim):
+        self.train_clim = clim
+
+    def set_val_climatology(self, clim):
+        self.val_clim = clim
+
+    def set_test_climatology(self, clim):
+        self.test_clim = clim
+
+
+
+class EmbeddingDecodeModule(pl.LightningModule):
+    def __init__(self,
+        encoders,
+        decoder,
+        lr=5e-4,
+        weight_decay=0.1,
+        warmup_epochs=5,
+        max_epochs=100,
+        warmup_start_lr=1e-8,
+        eta_min=1e-8
+    ):
+        super().__init__()
+        self.save_hyperparameters(ignore=["encoders", "decoder"])
+        self.encoders = encoders
+        self.decoder = decoder
+        
+    def forward(self, x):
+        # x.shape = [b,c,h,w]
+        embeddings = []
+        for i, enc in enumerate(self.encoders):
+            embed = enc(x[:,i].unsqueeze(1))
+            embeddings.append(F.normalize(embed))
+        embeddings = torch.cat(embeddings, 1)
+        return self.decoder(embeddings)
+    
+    def training_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log("train_loss", loss, on_step=True, on_epoch=False, prog_bar=True, batch_size=len(batch[0]))
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log("val_loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=len(batch[0]))
+        return loss
+
+    def test_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log("test_loss", loss, on_step=False, on_epoch=True, prog_bar=True, batch_size=len(batch[0]))
+        return loss
+        
+    def compute_loss(self, batch):
+        x = batch[0]
+        yhat = self(x)
+        error = torch.square(yhat - x)
+        lat_weighted_error = error * self.w_lat.unsqueeze(1)
+        lat_weighted_mse = torch.mean(lat_weighted_error)
+        return lat_weighted_mse
+    
+    def configure_optimizers(self):
+        optimizer = torch.optim.AdamW(
+            self.decoder.parameters(),
+            self.hparams.lr,
+            weight_decay=self.hparams.weight_decay
+        )
+        lr_scheduler = LinearWarmupCosineAnnealingLR(
+            optimizer,
+            self.hparams.warmup_epochs,
+            self.hparams.max_epochs,
+            self.hparams.warmup_start_lr,
+            self.hparams.eta_min
+        )
+        return {
+            "optimizer": optimizer,
+            "lr_scheduler": lr_scheduler
+        }
+
+    def on_train_start(self):
+        self.send_tensors_to_device()
+
+    def on_validation_start(self):
+        self.send_tensors_to_device()
+
+    def on_test_start(self):
+        self.send_tensors_to_device()
+    
+    def set_denormalization(self, mean, std):
+        self.denormalization = transforms.Normalize(mean, std)
+
+    def set_lat_lon(self, lat, lon):
+        self.lat = lat
+        self.lon = lon
+        w_lat = np.cos(np.deg2rad(lat))
+        w_lat /= w_lat.mean()
+        self.w_lat = torch.from_numpy(w_lat).unsqueeze(0).unsqueeze(-1)
+
+    def set_pred_range(self, r):
+        self.pred_range = r
+
+    def set_train_climatology(self, clim):
+        self.train_clim = clim
+
+    def set_val_climatology(self, clim):
+        self.val_clim = clim
+
+    def set_test_climatology(self, clim):
+        self.test_clim = clim
+
+    def send_tensors_to_device(self):
+        self.w_lat = self.w_lat.to(device=self.device)
