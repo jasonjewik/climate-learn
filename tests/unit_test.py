@@ -8,7 +8,38 @@ from climate_learn.models.modules.utils.metrics import (
     lat_weighted_spread_skill_ratio,
     lat_weighted_crps_gaussian,
     lat_weighted_nll,
+    lat_weighted_atmodist,
 )
+
+def test_lat_weighted_atmodist():
+    # create test input tensors
+    batch_size = 128
+    num_channels = 3
+    height = 32
+    width = 64
+    lat = np.random.rand(height)
+    y = torch.randn(batch_size, num_channels, height, width)
+    pred = torch.randn(batch_size, num_channels, height, width)
+
+    # call the lat_weighted_atmodist function
+    transform = None
+    vars = ["var1", "var2", "var3"]
+    clim = None
+    log_postfix = "test"
+    loss_dict = lat_weighted_atmodist(pred, y, transform, vars, lat, clim, log_postfix)
+
+    # check the shape of the output dictionary
+    assert len(loss_dict) == len(vars) + 1  # +1 for "loss" key
+
+    # check the shape and type of each loss
+    for var in vars:
+        loss_key = f"w_atmodist_{var}_{log_postfix}"
+        assert loss_key in loss_dict
+        assert isinstance(loss_dict[loss_key], torch.Tensor)
+
+    assert isinstance(loss_dict["loss"], torch.Tensor)
+
+    print("\nweighted atmodist loss:\n", loss_dict)
 
 
 def test_lat_weighted_nll():

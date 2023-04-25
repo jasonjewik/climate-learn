@@ -50,6 +50,38 @@ def lat_weighted_mse(pred, y, vars, lat, log_postfix=""):
     return loss_dict
 
 
+def lat_weighted_atmodist(pred, y, transform, vars, lat, clim, log_postfix):
+    """
+    y: [B, C, H, W]
+    pred: [B, C, H, W]
+    vars: list of variable names
+    lat: H
+    """
+    # Compute the mean squared error loss
+    mse_loss = (pred - y) ** 2
+    # Compute the Kullback-Leibler divergence loss
+    kld_loss = torch.nn.KLDivLoss()(pred, y)
+    # Combine the two losses using a weighting factor
+    error = mse_loss + 0.1 * kld_loss
+    print(mse_loss, kld_loss)
+    print(error.shape)
+    
+     # lattitude weights
+    w_lat = np.cos(np.deg2rad(lat))
+    w_lat = w_lat / w_lat.mean()  # (H, )
+    w_lat = (
+        torch.from_numpy(w_lat).unsqueeze(0).unsqueeze(-1).to(error.device)
+    )  # (1, H, 1)
+
+    loss_dict = {}
+    with torch.no_grad():
+        for i, var in enumerate(vars):
+            loss_dict[f"w_atmodist_{var}_{log_postfix}"] = (error[:, i] * w_lat).mean()
+
+    loss_dict["loss"] = torch.mean(error * w_lat.unsqueeze(1))
+    return loss_dict
+
+
 ### Forecasting metrics
 
 
