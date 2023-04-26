@@ -9,6 +9,172 @@ import torch.nn.functional as F
 from torch.optim.lr_scheduler import ExponentialLR
 
 
+class PretrainLitModule2(pl.LightningModule):
+    def __init__(
+        self,
+        nets,
+        lr=5e-4,
+        weight_decay=0.1,
+        warmup_epochs=5,
+        max_epochs=100,
+        warmup_start_lr=1e-8,
+        eta_min=1e-8,
+        temp=torch.e,
+        max_temp=10,
+        temp_lr=1e-3,
+        logit_scaling=True
+    ):
+        super().__init__()
+        self.save_hyperparameters(ignore=["nets"])
+        self.nets = nn.ModuleList(nets)
+        temp = torch.tensor([temp], requires_grad=True)
+        self.temp = nn.parameter.Parameter(temp)
+        self.max_temp = torch.tensor([max_temp], requires_grad=False)
+        self.criterion = nn.CrossEntropyLoss()
+
+    def forward(self, X):
+        # X.shape = [b,c,h,w]
+        Y_hat = []
+        for net in self.nets:
+            x = X[:,0].unsqueeze(1)
+            # x.shape = [b,1,h,w]
+            y_hat = net(x)
+            # y_hat.shape = [b,embed_dim]
+            Y_hat.append(y_hat)
+        # Y_hat.shape = [b,c,embed_dim]
+        Y_hat = torch.stack(Y_hat, dim=1)
+        # Y_hat_norm.shape = [b,c,embed_dim]
+        Y_hat_norm = F.normalize(Y_hat, dim=2)
+        return Y_hat_norm
+        
+    def training_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log(
+            "train_loss",
+            loss,
+            on_step=True,
+            on_epoch=False,
+            prog_bar=True,
+            batch_size=len(batch[0])
+        )
+        self.log(
+            "logit_temp",
+            self.logit_temp,
+            on_step=True,
+            on_epoch=False,
+            batch_size=len(batch[0])
+        )
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log(
+            "val_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            prog_bar=False,
+            sync_dist=True,
+            batch_size=len(batch[0])
+        )
+        self.log(
+            "logit_temp",
+            self.logit_temp,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch[0])
+        )
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        loss = self.compute_loss(batch)
+        self.log(
+            "test_loss",
+            loss,
+            on_step=False,
+            on_epoch=True,
+            sync_dist=True,
+            batch_size=len(batch[0])
+        )
+        self.log(
+            "logit_temp",
+            self.logit_temp,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch[0])
+        )
+        return loss
+    
+    def compute_loss(self, batch):
+        X = batch[0]
+        if self.hparams.logit_scaling:
+            logit_temp = self.logit_temp.clamp(max=self.max_logit_temp)
+            logit_scale = logit_temp.exp()
+        else:
+            logit_scale = 1
+        embeddings = self(X)
+        logits = logit_scale * (embeddings[0] @ embeddings[1].T)
+        labels = torch.arange(X.shape[0]).to(device=self.device)
+        loss = self.criterion(logits, labels)
+        loss += self.criterion(logits.T, labels)
+        loss /= 2
+        return loss
+    
+    def configure_optimizers(self):
+        params = [
+            {
+                "params": self.net.parameters(),
+                "lr": self.hparams.lr,
+                "weight_decay": self.hparams.weight_decay
+            },
+            {
+                "params": self.temp,
+                "lr": self.hparams.temp_lr
+            }
+        ]
+        optimizer = torch.optim.AdamW(params)
+        lr_scheduler = LinearWarmupCosineAnnealingLR(
+            optimizer,
+            self.hparams.warmup_epochs,
+            self.hparams.max_epochs,
+            self.hparams.warmup_start_lr,
+            self.hparams.eta_min
+        )
+        return {"optimizer": optimizer, "lr_scheduler": lr_scheduler}
+
+    def on_train_start(self):
+        self.send_tensors_to_device()
+
+    def on_validation_start(self):
+        self.send_tensors_to_device()
+
+    def on_test_start(self):
+        self.send_tensors_to_device()
+    
+    def set_denormalization(self, mean, std):
+        self.denormalization = transforms.Normalize(mean, std)
+
+    def set_lat_lon(self, lat, lon):
+        self.lat = lat
+        self.lon = lon
+
+    def set_pred_range(self, r):
+        self.pred_range = r
+
+    def set_train_climatology(self, clim):
+        self.train_clim = clim
+
+    def set_val_climatology(self, clim):
+        self.val_clim = clim
+
+    def set_test_climatology(self, clim):
+        self.test_clim = clim
+
+    def send_tensors_to_device(self):
+        self.logit_temp = self.logit_temp.to(device=self.device)
+        self.max_logit_temp = self.max_logit_temp.to(device=self.device)
+
+
 class PretrainLitModule(pl.LightningModule):
     def __init__(
         self,

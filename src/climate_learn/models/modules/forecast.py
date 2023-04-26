@@ -231,23 +231,10 @@ class ForecastLitModule(LightningModule):
         return loss_dict
 
     def configure_optimizers(self):
-        decay = []
-        no_decay = []
-        for name, m in self.named_parameters():
-            if "pos_embed" in name:
-                no_decay.append(m)
-            else:
-                decay.append(m)
-
-        optimizer = self.optim_cls(
-            [
-                {
-                    "params": filter(lambda p: p.requires_grad, decay),
-                    "lr": self.hparams.lr,
-                    "weight_decay": self.hparams.weight_decay,
-                },
-                {"params": filter(lambda p: p.requires_grad, no_decay), "lr": self.hparams.lr, "weight_decay": 0},
-            ]
+        optimizer = torch.optim.AdamW(
+            self.net.parameters(),
+            lr=self.hparams.lr,
+            weight_decay=self.hparams.weight_decay
         )
 
         lr_scheduler = LinearWarmupCosineAnnealingLR(

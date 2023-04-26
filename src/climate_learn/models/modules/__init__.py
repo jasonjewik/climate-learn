@@ -3,6 +3,7 @@ from .downscale import DownscaleLitModule
 from .linear import LinearLitModule
 from .pretrain import (
     PretrainLitModule,
+    PretrainLitModule2,
     EmbeddingDecodeModule,
     EncodedForecastLitModule
 )
