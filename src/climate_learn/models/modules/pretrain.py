@@ -59,7 +59,7 @@ class PretrainLitModule2(pl.LightningModule):
         )
         self.log(
             "logit_temp",
-            self.logit_temp,
+            self.temp,
             on_step=True,
             on_epoch=False,
             batch_size=len(batch[0])
@@ -79,7 +79,7 @@ class PretrainLitModule2(pl.LightningModule):
         )
         self.log(
             "logit_temp",
-            self.logit_temp,
+            self.temp,
             on_step=False,
             on_epoch=True,
             batch_size=len(batch[0])
@@ -98,7 +98,7 @@ class PretrainLitModule2(pl.LightningModule):
         )
         self.log(
             "logit_temp",
-            self.logit_temp,
+            self.temp,
             on_step=False,
             on_epoch=True,
             batch_size=len(batch[0])
@@ -108,12 +108,12 @@ class PretrainLitModule2(pl.LightningModule):
     def compute_loss(self, batch):
         X = batch[0]
         if self.hparams.logit_scaling:
-            logit_temp = self.logit_temp.clamp(max=self.max_logit_temp)
-            logit_scale = logit_temp.exp()
+            temp = self.temp.clamp(max=self.max_temp)
+            logit_scale = temp.exp()
         else:
             logit_scale = 1
         embeddings = self(X)
-        logits = logit_scale * (embeddings[0] @ embeddings[1].T)
+        logits = logit_scale * (embeddings[:,0] @ embeddings[:,1].T)
         labels = torch.arange(X.shape[0]).to(device=self.device)
         loss = self.criterion(logits, labels)
         loss += self.criterion(logits.T, labels)
@@ -121,17 +121,17 @@ class PretrainLitModule2(pl.LightningModule):
         return loss
     
     def configure_optimizers(self):
-        params = [
-            {
-                "params": self.net.parameters(),
+        params = []
+        for net in self.nets:
+            params.append({
+                "params": net.parameters(),
                 "lr": self.hparams.lr,
                 "weight_decay": self.hparams.weight_decay
-            },
-            {
-                "params": self.temp,
-                "lr": self.hparams.temp_lr
-            }
-        ]
+            })
+        params.append({
+            "params": self.temp,
+            "lr": self.hparams.temp_lr
+        })
         optimizer = torch.optim.AdamW(params)
         lr_scheduler = LinearWarmupCosineAnnealingLR(
             optimizer,
@@ -171,8 +171,8 @@ class PretrainLitModule2(pl.LightningModule):
         self.test_clim = clim
 
     def send_tensors_to_device(self):
-        self.logit_temp = self.logit_temp.to(device=self.device)
-        self.max_logit_temp = self.max_logit_temp.to(device=self.device)
+        self.temp = self.temp.to(device=self.device)
+        self.max_temp = self.max_temp.to(device=self.device)
 
 
 class PretrainLitModule(pl.LightningModule):
