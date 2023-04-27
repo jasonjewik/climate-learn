@@ -48,7 +48,7 @@ class PretrainLitModule2(pl.LightningModule):
         return Y_hat_norm
         
     def training_step(self, batch, batch_idx):
-        loss = self.compute_loss(batch)
+        loss = self.compute_loss(batch)        
         self.log(
             "train_loss",
             loss,
@@ -68,42 +68,28 @@ class PretrainLitModule2(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         loss = self.compute_loss(batch)
-        self.log(
-            "val_loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            prog_bar=False,
-            sync_dist=True,
-            batch_size=len(batch[0])
-        )
-        self.log(
-            "logit_temp",
-            self.temp,
+        self.log_dict(
+            {"val_loss": loss, "logit_temp": self.temp},
             on_step=False,
             on_epoch=True,
             batch_size=len(batch[0])
         )
-        return loss
     
     def test_step(self, batch, batch_idx):
         loss = self.compute_loss(batch)
-        self.log(
-            "test_loss",
-            loss,
-            on_step=False,
-            on_epoch=True,
-            sync_dist=True,
-            batch_size=len(batch[0])
-        )
-        self.log(
-            "logit_temp",
-            self.temp,
+        self.log_dict(
+            {"test_loss": loss, "logit_temp": self.temp},
             on_step=False,
             on_epoch=True,
             batch_size=len(batch[0])
         )
-        return loss
+        retrieval_score = self.compute_retrieval_score(batch)
+        self.log_dict(
+            retrieval_score,
+            on_step=False,
+            on_epoch=True,
+            batch_size=len(batch[0])
+        )
     
     def compute_loss(self, batch):
         X = batch[0]
@@ -119,6 +105,29 @@ class PretrainLitModule2(pl.LightningModule):
         loss += self.criterion(logits.T, labels)
         loss /= 2
         return loss
+
+    def compute_retrieval_score(self, batch):
+        X = batch[0]
+        embeddings = self(X)
+        a, b = embeddings[:,0], embeddings[:,1]
+        ab_counts = [0, 0, 0, 0]
+        ba_counts = [0, 0, 0, 0]
+        top_acc = [1, 3, 5, 10]
+        for i in range(X.shape[0]):
+            ab_ranking = torch.argsort(torch.mean(torch.square(a[i] - b), dim=1))
+            ba_ranking = torch.argsort(torch.mean(torch.square(b[i] - a), dim=1))
+            for j, acc in enumerate(top_acc):
+                if i in ab_ranking[:acc]:
+                    ab_counts[j] += 1
+                if i in ba_ranking[:acc]:
+                    ba_counts[j] += 1
+        ab_counts = torch.tensor(ab_counts) / x.shape[0]
+        ba_counts = torch.tensor(ba_counts) / x.shape[0]
+        score_dict = {}
+        for i, acc in enumerate(top_acc):
+            score_dict[f"ab_top{acc}"] = ab_counts[i]
+            score_dict[f"ba_top{acc}"] = ba_counts[i]
+        return score_dict       
     
     def configure_optimizers(self):
         params = []

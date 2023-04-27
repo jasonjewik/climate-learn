@@ -5,14 +5,9 @@ import numpy as np
 
 
 class RetrievalLitModule(pl.LightningModule):
-    def __init__(
-        self,
-        net,
-        net2=None,
-    ):
+    def __init__(self, nets):
         super().__init__()
-        self.net = net
-        self.net2 = net2
+        
 
     def forward(self, x):
         yhat0 = self.net(x[:,0].unsqueeze(1))

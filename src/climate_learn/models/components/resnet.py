@@ -101,19 +101,20 @@ class ResNet(nn.Module):
         ], pred
     
 
-class ResNet2(nn.Module):
+class ResNetModified(nn.Module):
     # ResNet with modifications for pretraining support
     def __init__(
         self,
         in_channels,
+        out_channels,
         history=1,
         hidden_channels=128,
+        embed_dim=128,
         activation="leaky",
-        out_channels=None,
         norm=True,
         dropout=0.1,
         n_blocks=2,
-        pretraining=False
+        use_proj_head=False
     ) -> None:
         super().__init__()
         self.in_channels = in_channels
@@ -161,14 +162,14 @@ class ResNet2(nn.Module):
         self.final = PeriodicConv2D(
             hidden_channels, out_channels, kernel_size=7, padding=3
         )
-        self.pretraining = pretraining
+        self.use_proj_head = use_proj_head
         self.proj_head = nn.Sequential(
             Downsample(out_channels),
             Downsample(out_channels),
             nn.Flatten(),
-            nn.Linear(out_channels*128, out_channels*128),
+            nn.Linear(out_channels*128, embed_dim),
             self.activation,
-            nn.Linear(out_channels*128, out_channels*128)
+            nn.Linear(embed_dim, embed_dim)
         )
 
     def predict(self, X):
@@ -179,7 +180,7 @@ class ResNet2(nn.Module):
         for m in self.blocks:
             X = m(X)
         yhat = self.final(self.activation(self.norm(X)))
-        if self.pretraining:
+        if self.use_proj_head:
             yhat = self.proj_head(yhat)
         return yhat
 
@@ -193,7 +194,7 @@ class ResNet2(nn.Module):
         log_postfix=None
     ):
         yhat = self.predict(X)
-        if self.pretraining:
+        if self.use_proj_head:
             return yhat
         else:
             return [
@@ -214,7 +215,7 @@ class ResNet2(nn.Module):
         log_postfix=None
     ):
         yhat = self.predict(X)
-        if self.pretraining:
+        if self.use_proj_head:
             return yhat
         else:
             return [
@@ -345,37 +346,50 @@ class ResNeXtDecoder(nn.Module):
     
 
 class ResNetForecaster(nn.Module):
-    def __init__(self, encoders, decoder, freeze_encoders=True):
+    def __init__(self, encoders, decoder):
         super().__init__()
         encoders_dict = {}        
         for i, enc in enumerate(encoders):
-            if freeze_encoders:
-                for param in enc.parameters():
-                    param.requires_grad = False
             encoders_dict[f"encoder{i}"] = enc
         self.encoders = nn.ModuleDict(encoders_dict)
         self.decoder = decoder
 
-    def predict(self, x):
-        if len(x.shape) == 4:
-            h = self.get_embeddings(x)
+    def predict(self, X):
+        if len(X.shape) == 4:
+            # X.shape = [B,N,H,W]
+            # embeddings.shape = [B,N,H,W]
+            embeddings = self.get_embeddings(X)
         elif len(x.shape) == 5:
-            embeds = []
-            for i in range(x.shape[1]):
-                embeds.append(self.get_embeddings(x[:,i]))
-            h = torch.stack(embeds, 1)
-            h = h.flatten(1, 2)
-        yhat = self.decoder(h)
+            # X.shape = [B,T,N,H,W]
+            T = X.shape[1]
+            embeddings = []
+            for t in range(T):
+                x = X[:,t]  # x.shape = [B,N,H,W]
+                embed = self.get_embeddings(x)
+                # embed.shape = [B,N,H,W]
+                embeddings.append(embed)
+            # embedding.shape = [B,T,N,H,W]
+            embeddings = torch.stack(embeddings, 1)
+            # embeddings.shape = [B,T*N,H,W]
+            embeddings = embeddings.flatten(1, 2)
+        # yhat.shape = [B,N,H,W]
+        yhat = self.decoder(embeddings)
         return yhat
     
-    def get_embeddings(self, x):
-        embeds = []
-        for i in range(len(self.encoders)):
-            enc = self.encoders[f"encoder{i}"]
-            embed = enc(x[:,i].unsqueeze(1))
-            embeds.append(embed)
-        h = torch.cat(embeds, 1)
-        return h
+    def get_embeddings(self, X):
+        # X.shape = [B,N,H,W]
+        N = X.shape[1]  # = len(self.encoders)
+        embeddings = []
+        for n in range(N):
+            encoder = self.encoders[f"encoder{i}"]
+            # x.shape = [B,1,H,W]
+            x = X[:,n].unsqueeze(1)
+            # embed.shape = [B,1,H,W]
+            embed = encoder(x)
+            embeddings.append(embed)
+        # embeddings.shape = [B,N,H,W]
+        embeddings = torch.cat(embeddings, 1)
+        return embeddings
         
     def forward(self, x, y, out_variables, metric, lat, log_postfix):
         pred = self.predict(x)
