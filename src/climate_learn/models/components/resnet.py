@@ -359,7 +359,7 @@ class ResNetForecaster(nn.Module):
             # X.shape = [B,N,H,W]
             # embeddings.shape = [B,N,H,W]
             embeddings = self.get_embeddings(X)
-        elif len(x.shape) == 5:
+        elif len(X.shape) == 5:
             # X.shape = [B,T,N,H,W]
             T = X.shape[1]
             embeddings = []
@@ -373,7 +373,7 @@ class ResNetForecaster(nn.Module):
             # embeddings.shape = [B,T*N,H,W]
             embeddings = embeddings.flatten(1, 2)
         # yhat.shape = [B,N,H,W]
-        yhat = self.decoder(embeddings)
+        yhat = self.decoder.predict(embeddings)
         return yhat
     
     def get_embeddings(self, X):
@@ -381,11 +381,11 @@ class ResNetForecaster(nn.Module):
         N = X.shape[1]  # = len(self.encoders)
         embeddings = []
         for n in range(N):
-            encoder = self.encoders[f"encoder{i}"]
+            encoder = self.encoders[f"encoder{n}"]
             # x.shape = [B,1,H,W]
             x = X[:,n].unsqueeze(1)
             # embed.shape = [B,1,H,W]
-            embed = encoder(x)
+            embed = encoder.predict(x)
             embeddings.append(embed)
         # embeddings.shape = [B,N,H,W]
         embeddings = torch.cat(embeddings, 1)
